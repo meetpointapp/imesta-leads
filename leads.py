@@ -37,17 +37,26 @@ SEGMENTS = {  # segment: (taban puan, e-posta metninde geçen etiket)
 STATUSES = ["new", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]
 FOLLOWUP_DAYS = {"email": 5, "call": 7, "sample": 10, "meeting": 7, "note": None}
 
-ISO2_TO_ISO3 = {
-    "DE": "DEU", "NL": "NLD", "BE": "BEL", "FR": "FRA", "GB": "GBR", "IT": "ITA", "ES": "ESP",
-    "PL": "POL", "RU": "RUS", "US": "USA", "CA": "CAN", "AE": "ARE", "SA": "SAU", "EG": "EGY",
-    "IQ": "IRQ", "JO": "JOR", "LB": "LBN", "KW": "KWT", "QA": "QAT", "OM": "OMN", "MA": "MAR",
-    "DZ": "DZA", "TN": "TUN", "LY": "LBY", "IN": "IND", "CN": "CHN", "JP": "JPN", "KR": "KOR",
-    "MY": "MYS", "ID": "IDN", "SG": "SGP", "AU": "AUS", "BR": "BRA", "MX": "MEX", "CH": "CHE",
-    "AT": "AUT", "SE": "SWE", "DK": "DNK", "NO": "NOR", "FI": "FIN", "IE": "IRL", "PT": "PRT",
-    "GR": "GRC", "CZ": "CZE", "RO": "ROU", "BG": "BGR", "HU": "HUN", "UA": "UKR", "KZ": "KAZ",
-    "AZ": "AZE", "GE": "GEO", "NG": "NGA", "ZA": "ZAF", "KE": "KEN", "PK": "PAK", "BD": "BGD",
-    "TR": "TUR",
+COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
+    "DE": ("Almanya", "DEU"), "NL": ("Hollanda", "NLD"), "BE": ("Belçika", "BEL"), "FR": ("Fransa", "FRA"),
+    "GB": ("Birleşik Krallık", "GBR"), "IT": ("İtalya", "ITA"), "ES": ("İspanya", "ESP"), "PL": ("Polonya", "POL"),
+    "RU": ("Rusya", "RUS"), "US": ("ABD", "USA"), "CA": ("Kanada", "CAN"), "AE": ("BAE", "ARE"),
+    "SA": ("Suudi Arabistan", "SAU"), "EG": ("Mısır", "EGY"), "IQ": ("Irak", "IRQ"), "JO": ("Ürdün", "JOR"),
+    "LB": ("Lübnan", "LBN"), "KW": ("Kuveyt", "KWT"), "QA": ("Katar", "QAT"), "OM": ("Umman", "OMN"),
+    "MA": ("Fas", "MAR"), "DZ": ("Cezayir", "DZA"), "TN": ("Tunus", "TUN"), "LY": ("Libya", "LBY"),
+    "IN": ("Hindistan", "IND"), "CN": ("Çin", "CHN"), "JP": ("Japonya", "JPN"), "KR": ("Güney Kore", "KOR"),
+    "MY": ("Malezya", "MYS"), "ID": ("Endonezya", "IDN"), "SG": ("Singapur", "SGP"), "AU": ("Avustralya", "AUS"),
+    "NZ": ("Yeni Zelanda", "NZL"), "BR": ("Brezilya", "BRA"), "MX": ("Meksika", "MEX"), "CH": ("İsviçre", "CHE"),
+    "AT": ("Avusturya", "AUT"), "SE": ("İsveç", "SWE"), "DK": ("Danimarka", "DNK"), "NO": ("Norveç", "NOR"),
+    "FI": ("Finlandiya", "FIN"), "IE": ("İrlanda", "IRL"), "PT": ("Portekiz", "PRT"), "GR": ("Yunanistan", "GRC"),
+    "CZ": ("Çekya", "CZE"), "SK": ("Slovakya", "SVK"), "SI": ("Slovenya", "SVN"), "HR": ("Hırvatistan", "HRV"),
+    "RS": ("Sırbistan", "SRB"), "RO": ("Romanya", "ROU"), "BG": ("Bulgaristan", "BGR"), "HU": ("Macaristan", "HUN"),
+    "LT": ("Litvanya", "LTU"), "LV": ("Letonya", "LVA"), "EE": ("Estonya", "EST"), "UA": ("Ukrayna", "UKR"),
+    "KZ": ("Kazakistan", "KAZ"), "AZ": ("Azerbaycan", "AZE"), "GE": ("Gürcistan", "GEO"), "IL": ("İsrail", "ISR"),
+    "NG": ("Nijerya", "NGA"), "ZA": ("Güney Afrika", "ZAF"), "KE": ("Kenya", "KEN"), "PK": ("Pakistan", "PAK"),
+    "BD": ("Bangladeş", "BGD"), "PH": ("Filipinler", "PHL"), "TH": ("Tayland", "THA"), "VN": ("Vietnam", "VNM"),
 }
+ISO2_TO_ISO3 = {k: v[1] for k, v in COUNTRIES.items()}
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS companies(
@@ -259,7 +268,7 @@ def cmd_harvest_osm(a):
     segs = [s for s in segs if s in OSM_FILTERS] or ["chocolate_maker"]
     log = lambda m: print(m, flush=True)  # noqa: E731
     total = 0
-    for cc in [c.strip() for c in a.country.upper().split(",") if c.strip()]:
+    for cc in [c.strip() for c in a.country.upper().split(",") if re.fullmatch(r"[A-Z]{2}", c.strip())]:
         log(f"{cc}:")
         n_cc = 0
         for seg in segs:

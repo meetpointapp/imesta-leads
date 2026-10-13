@@ -26,7 +26,7 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 ```bash
 python3 web.py              # http://127.0.0.1:8765
 ```
-Sayfalar: **Panel** (özet kartlar, satış hattı kanban'ı, bugünkü takipler), **Firmalar** (arama/filtre), **Firma detayı** (kişiler, geçmiş, takip kaydı, durum, e-posta taslağı + "Mail uygulamasında aç"), **Firma ekle**, **İçe aktar** (CSV yükle/yapıştır), **Pazarlar** (ülke sıralaması), **Araçlar** (Comtrade, OSM, e-posta toplama, puanlama – arka planda çalışır).
+Sayfalar: **Panel** (başlangıç adımları, özet kartlar, satış hattı), **Firmalar** (arama/filtre, Excel'e aktarma), **Firma detayı** (kişiler, geçmiş, takip, e-posta taslağı), **Pazarlar** (ülke sıralaması + her ülke için tek tıkla **Firma bul** düğmesi), **Firma bul** (seçtiğin ülkelerde otomatik firma bulma + e-posta toplama + puanlama), **Firma ekle**, **İçe aktar** (CSV).
 
 - Renkler ve logo: `config.json` → `theme` (`brand`, `accent`, `cream`, `cocoa`, `logo_url`). imestafood.com'a erişemediğim için kakao kahvesi + krem + altın paleti kullandım; kurumsal renk kodlarınızı buraya yazın.
 - Ekip içinde paylaşmak için: `WEB_PASSWORD=sifreniz python3 web.py --host 0.0.0.0` (kullanıcı adı: `imesta`). Şifresiz sadece kendi bilgisayarınızda (127.0.0.1) açılır. İnternete açacaksanız HTTPS arkasına (ör. Caddy/nginx) koyun.
