@@ -13,8 +13,13 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 ## Windows'ta kurulum (5 dakika)
 
 1. Python kurun: https://www.python.org/downloads/ → indir → kurulumda **"Add python.exe to PATH"** kutusunu işaretleyin.
-2. Kodu indirin: GitHub'da dalı açıp **Code → Download ZIP**, ZIP'i bir klasöre çıkarın, içindeki `imesta-leads` klasörüne girin.
-3. `baslat.bat` dosyasına çift tıklayın; tarayıcıda panel açılır. (Komut satırından: klasörde `py web.py`. Windows'ta `python3` değil `py` veya `python` yazılır.)
+2. Git'i kurun (https://git-scm.com/download/win), sonra cmd'de:
+   ```
+   git clone https://github.com/meetpointapp/imesta-leads.git
+   cd imesta-leads
+   ```
+   (Git istemezseniz GitHub'da **Code → Download ZIP**.) Güncellemek için klasörde `git pull`; `leads.db` verileriniz git'e girmez, silinmez.
+3. `baslat.bat` dosyasına çift tıklayın; tarayıcıda panel açılır. (Komut satırından: `py web.py`. Windows'ta `python3` değil `py` veya `python` yazılır.)
 
 ## Web arayüzü
 
