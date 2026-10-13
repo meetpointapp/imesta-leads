@@ -1,0 +1,11 @@
+Subject: Last note – cocoa samples for {company}
+
+Dear {contact},
+
+This is my last message so I do not fill your inbox. If cocoa sourcing becomes relevant (new recipes, price pressure, supplier diversification), we are glad to quote within 24 hours.
+
+Kind regards,
+{sender_name}
+{sender_title} | {company_name} | {website}
+
+{postal_address} – reply "unsubscribe" to stop receiving messages.

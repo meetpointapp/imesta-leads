@@ -1,0 +1,24 @@
+Subject: Cocoa powder & butter supply from Turkey – {company}
+
+Dear {contact},
+
+I am {sender_name} from {company_name}, a Turkish cocoa processor and exporter. We supply {products} to food manufacturers in Europe, the Middle East and beyond.
+
+I noticed {company} works in {segment_label}, so I wanted to ask whether you are currently looking for an additional or alternative cocoa supplier. What we can offer:
+
+- Consistent quality with specification sheets and COA for every batch
+- Flexible packaging (25 kg bags, big bags, private label) and competitive FOB/CIF prices
+- Short lead times from Turkey (road to Europe, sea to the Gulf)
+- {certifications}
+
+I would be happy to send a spec sheet, price indication and free samples. Would a short call next week suit you?
+
+Best regards,
+{sender_name}
+{sender_title} | {company_name}
+{sender_email} | {sender_phone}
+{website}
+
+---
+{postal_address}
+You receive this one-time business enquiry because your company appears in public trade sources. If you do not wish to be contacted, reply "unsubscribe" and we will not write again.

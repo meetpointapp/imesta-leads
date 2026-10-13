@@ -1,0 +1,24 @@
+Betreff: Kakaopulver & Kakaobutter aus der Türkei – {company}
+
+Sehr geehrte Damen und Herren,
+
+mein Name ist {sender_name} von {company_name}, einem türkischen Kakaoverarbeiter und Exporteur. Wir liefern {products} an Lebensmittelhersteller in Europa und im Nahen Osten.
+
+Da {company} im Bereich {segment_label} tätig ist, möchte ich fragen, ob Sie aktuell einen zusätzlichen oder alternativen Kakaolieferanten suchen. Wir bieten:
+
+- Gleichbleibende Qualität mit Spezifikation und Analysezertifikat je Charge
+- Flexible Verpackung (25-kg-Säcke, Big Bags, Private Label) und wettbewerbsfähige Preise
+- Kurze Lieferzeiten aus der Türkei
+- {certifications}
+
+Gerne senden wir Ihnen Spezifikation, Preisindikation und kostenlose Muster. Passt Ihnen ein kurzes Telefonat in der nächsten Woche?
+
+Mit freundlichen Grüßen
+{sender_name}
+{sender_title} | {company_name}
+{sender_email} | {sender_phone}
+{website}
+
+---
+{postal_address}
+Sie erhalten diese einmalige geschäftliche Anfrage, da Ihr Unternehmen in öffentlichen Handelsquellen verzeichnet ist. Antworten Sie "unsubscribe", wenn Sie keine weitere Kontaktaufnahme wünschen.
