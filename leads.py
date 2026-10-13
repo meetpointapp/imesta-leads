@@ -7,6 +7,7 @@ Kullanım: python3 leads.py --help
 import argparse
 import csv
 import datetime as dt
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import io
 import json
 import os
@@ -22,6 +23,8 @@ import urllib.request
 import urllib.robotparser
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import crawler  # noqa: E402
 DB_PATH = os.environ.get("LEADS_DB", os.path.join(HERE, "leads.db"))
 UA = "ImestaFoodBot/1.0 (+https://imestafood.com; B2B supplier research)"
 
@@ -83,7 +86,13 @@ CREATE TABLE IF NOT EXISTS trade_flows(
 
 # ---------------------------------------------------------------- yardımcılar
 NEW_COLUMNS = [("value_usd", "REAL"), ("product", "TEXT"), ("lost_reason", "TEXT"),
-               ("starred", "INTEGER DEFAULT 0"), ("snoozed_until", "TEXT")]
+               ("starred", "INTEGER DEFAULT 0"), ("snoozed_until", "TEXT"),
+               ("address", "TEXT"), ("phone", "TEXT"), ("linkedin", "TEXT"), ("facebook", "TEXT"), ("instagram", "TEXT"),
+               ("twitter", "TEXT"), ("youtube", "TEXT"), ("whatsapp", "TEXT"), ("description", "TEXT"), ("legal_id", "TEXT"),
+               ("lang", "TEXT"), ("cocoa_signal", "INTEGER"), ("business_type", "TEXT"), ("employees", "TEXT"), ("founded", "TEXT"),
+               ("lat", "REAL"), ("lon", "REAL"), ("data_score", "INTEGER DEFAULT 0"), ("enrich_pages", "INTEGER DEFAULT 0"),
+               ("enrich_error", "TEXT"), ("enrich_v", "INTEGER DEFAULT 0")]
+CONTACT_COLUMNS = [("dept", "TEXT"), ("kind", "TEXT"), ("confidence", "INTEGER"), ("source_url", "TEXT")]
 
 
 def migrate(con):
@@ -92,6 +101,10 @@ def migrate(con):
     for name, typ in NEW_COLUMNS:
         if name not in cols:
             con.execute(f"ALTER TABLE companies ADD COLUMN {name} {typ}")
+    kcols = {r[1] for r in con.execute("PRAGMA table_info(contacts)")}
+    for name, typ in CONTACT_COLUMNS:
+        if name not in kcols:
+            con.execute(f"ALTER TABLE contacts ADD COLUMN {name} {typ}")
     con.commit()
 
 
@@ -178,15 +191,41 @@ EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 JUNK_EMAIL = re.compile(r"(\.(png|jpe?g|gif|svg|webp|css|js)$)|sentry|example\.|wixpress|your-?domain|@2x", re.I)
 
 
+_MAIL_DOMAIN_CACHE = {}
+
+
+def mail_domain_ok(domain):
+    """Alan adı e-posta alabilir mi? Önce MX kaydı (DNS-over-HTTPS, ücretsiz), olmazsa A kaydı. Sonuç önbelleğe alınır."""
+    domain = domain.lower().strip(".")
+    if domain in _MAIL_DOMAIN_CACHE:
+        return _MAIL_DOMAIN_CACHE[domain]
+    ok = None
+    try:
+        req = urllib.request.Request("https://cloudflare-dns.com/dns-query?name=" + urllib.parse.quote(domain) + "&type=MX",
+                                     headers={"accept": "application/dns-json", "User-Agent": UA})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        if data.get("Status") == 3:  # NXDOMAIN
+            ok = False
+        elif any(a.get("type") == 15 for a in data.get("Answer", [])):
+            ok = True
+    except Exception:
+        pass
+    if ok is None:  # MX yok ya da DoH ulaşılamadı: A kaydı (RFC: örtük MX)
+        try:
+            socket.getaddrinfo(domain, None)
+            ok = True
+        except OSError:
+            ok = False
+    _MAIL_DOMAIN_CACHE[domain] = ok
+    return ok
+
+
 def check_email(email):
-    """Sözdizimi + alan adı çözümleniyor mu (ücretsiz, zayıf ama işe yarar kontrol)."""
+    """Sözdizimi + alan adı e-posta alabiliyor mu (MX/A). 1 = geçerli görünüyor."""
     if not EMAIL_RE.fullmatch(email or ""):
         return 0
-    try:
-        socket.getaddrinfo(email.split("@")[1], None)
-        return 1
-    except OSError:
-        return 0
+    return 1 if mail_domain_ok(email.split("@")[1]) else 0
 
 
 def is_suppressed(con, company_id=None, email=None, domain=None):
@@ -250,12 +289,164 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
     return cid, new
 
 
-def add_contact(con, cid, name=None, role=None, email=None, phone=None, linkedin=None, source=None):
+DIAL = {"DE": "49", "AT": "43", "CH": "41", "NL": "31", "BE": "32", "FR": "33", "GB": "44", "IT": "39", "ES": "34", "PL": "48", "RU": "7",
+        "US": "1", "CA": "1", "AE": "971", "SA": "966", "EG": "20", "IQ": "964", "JO": "962", "LB": "961", "KW": "965", "QA": "974", "OM": "968",
+        "MA": "212", "DZ": "213", "TN": "216", "LY": "218", "IN": "91", "CN": "86", "JP": "81", "KR": "82", "MY": "60", "ID": "62", "SG": "65",
+        "AU": "61", "NZ": "64", "BR": "55", "MX": "52", "SE": "46", "DK": "45", "NO": "47", "FI": "358", "IE": "353", "PT": "351", "GR": "30",
+        "CZ": "420", "SK": "421", "SI": "386", "HR": "385", "RS": "381", "RO": "40", "BG": "359", "HU": "36", "LT": "370", "LV": "371",
+        "EE": "372", "UA": "380", "KZ": "7", "AZ": "994", "GE": "995", "IL": "972", "NG": "234", "ZA": "27", "KE": "254", "PK": "92",
+        "BD": "880", "PH": "63", "TH": "66", "VN": "84", "TR": "90"}
+
+
+def format_phone(p, country=None):
+    """crawler telefon sözlüğünü '+90...' biçimine çevirir; ulusal numaraya ülke kodunu ekler."""
+    d = p["digits"]
+    if p["intl"]:
+        return "+" + d
+    cc = DIAL.get((country or "").upper())
+    return "+" + cc + d[1:] if cc and d.startswith("0") else d
+
+
+def norm_phone_text(raw, country=None):
+    p = crawler._norm_phone(raw or "")
+    return format_phone(p, country) if p else None
+
+
+FILL_COLS = {"address", "phone", "linkedin", "facebook", "instagram", "twitter", "youtube", "whatsapp", "description", "legal_id",
+             "lang", "employees", "founded", "lat", "lon", "city"}
+
+
+def fill_company(con, cid, **fields):
+    """Sadece boş olan alanları doldurur (elle girilen bilgilerin üzerine yazmaz)."""
+    for k, v in fields.items():
+        if k in FILL_COLS and v not in (None, ""):
+            con.execute(f"UPDATE companies SET {k}=? WHERE id=? AND ({k} IS NULL OR {k}='')", (v, cid))
+
+
+def add_contact(con, cid, name=None, role=None, email=None, phone=None, linkedin=None, source=None,
+                dept=None, kind=None, confidence=None, source_url=None, email_ok=None):
+    """Kişi/iletişim kaydı ekler; aynı e-posta, aynı isim ya da aynı telefon varsa yenisini açmaz, boş alanları tamamlar."""
     email = (email or "").strip().lower() or None
+    name = (name or "").strip() or None
     if email and is_suppressed(con, email=email):
-        return
-    con.execute("INSERT OR IGNORE INTO contacts(company_id,name,role,email,email_ok,phone,linkedin,source) VALUES(?,?,?,?,?,?,?,?)",
-                (cid, name, role, email, check_email(email) if email else 0, phone, linkedin, source))
+        return None
+    if email and not dept:
+        r = con.execute("SELECT domain FROM companies WHERE id=?", (cid,)).fetchone()
+        dept = crawler.classify_email(email, (r["domain"] if r else "") or "")["dept"]
+    if email:
+        row = con.execute("SELECT id FROM contacts WHERE company_id=? AND email=?", (cid, email)).fetchone()
+        ok = check_email(email) if email_ok is None else email_ok
+    else:
+        digits = re.sub(r"\D", "", phone or "")
+        row = None
+        if name:
+            row = con.execute("SELECT id FROM contacts WHERE company_id=? AND lower(name)=lower(?)", (cid, name)).fetchone()
+        elif digits:
+            for k in con.execute("SELECT id,phone FROM contacts WHERE company_id=? AND phone IS NOT NULL", (cid,)):
+                if re.sub(r"\D", "", k["phone"]) == digits:
+                    row = k
+                    break
+        ok = 0
+    if row:
+        con.execute("UPDATE contacts SET role=COALESCE(NULLIF(role,''),?), phone=COALESCE(NULLIF(phone,''),?), linkedin=COALESCE(NULLIF(linkedin,''),?), "
+                    "dept=COALESCE(NULLIF(dept,''),?), kind=COALESCE(NULLIF(kind,''),?), source_url=COALESCE(NULLIF(source_url,''),?), "
+                    "confidence=MAX(IFNULL(confidence,0),?) WHERE id=?",
+                    (role, phone, linkedin, dept, kind, source_url, confidence or 0, row["id"]))
+        return row["id"]
+    cur = con.execute("INSERT INTO contacts(company_id,name,role,email,email_ok,phone,linkedin,source,dept,kind,confidence,source_url) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (cid, name, role, email, ok, phone, linkedin, source, dept, kind, confidence, source_url))
+    return cur.lastrowid
+
+
+def update_data_score(con, cid):
+    """Veri doluluğu 0-100: ne kadar iletişim bilgisi toplandı?"""
+    c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+    if not c:
+        return 0
+    ks = con.execute("SELECT * FROM contacts WHERE company_id=?", (cid,)).fetchall()
+    s = 15 if c["website"] else 0
+    s += 25 if any(k["email_ok"] for k in ks) else 0
+    s += 15 if (c["phone"] or any(k["phone"] for k in ks)) else 0
+    s += 15 if any(k["name"] for k in ks) else 0
+    s += 10 if c["address"] else 0
+    s += 10 if (c["linkedin"] or c["facebook"] or c["instagram"] or c["twitter"] or c["youtube"]) else 0
+    s += 5 if c["description"] else 0
+    s += 5 if c["legal_id"] else 0
+    con.execute("UPDATE companies SET data_score=? WHERE id=?", (s, cid))
+    return s
+
+
+def apply_enrichment(con, cid, res):
+    """Tarama sonucunu (crawler.crawl_site) veritabanına yazar. {'emails','phones','people','socials'} sayılarını döner."""
+    stats = {"emails": 0, "phones": 0, "people": 0, "socials": 0}
+    c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+    if not c:
+        return stats
+    if not res["ok"]:
+        con.execute("UPDATE companies SET enriched_at=?, enrich_error=?, enrich_pages=0, enrich_v=2 WHERE id=?",
+                    (today(), "; ".join(res["errors"])[:300], cid))
+        con.commit()
+        return stats
+    domain = c["domain"] or get_domain(res["final_url"])
+    country = c["country"]
+    prio = crawler.DEPT_PRIORITY
+    ranked = sorted(res["emails"].items(), key=lambda kv: (prio.get(kv[1]["dept"], 12), kv[0]))[:12]
+    for e, m in ranked:
+        conf = (90 if m["via"] in ("mailto", "jsonld", "cf") else 75) - (30 if m["free"] else 0)
+        add_contact(con, cid, email=e, dept=m["dept"], kind="email", confidence=conf, source_url=m["source_url"], source="web")
+    stats["emails"] = len(ranked)
+    phones = sorted(res["phones"].values(), key=lambda p: ({"jsonld": 0, "tel": 1, "label": 2, "text": 3, "whatsapp": 4}.get(p["via"], 5), not p["intl"]))
+    plist = []
+    for p in phones:
+        t = format_phone(p, country)
+        if t not in plist:
+            plist.append(t)
+    if plist:
+        fill_company(con, cid, phone=plist[0])
+        for t in plist[1:3]:
+            add_contact(con, cid, phone=t, dept="info", kind="phone", confidence=70, source="web")
+    for p in phones:
+        if p["via"] == "whatsapp":
+            fill_company(con, cid, whatsapp=format_phone(p, country))
+    stats["phones"] = len(plist)
+    soc = {k: v for k, v in res["socials"].items() if k in ("linkedin", "facebook", "instagram", "twitter", "youtube")}
+    fill_company(con, cid, **soc)
+    stats["socials"] = len(soc)
+    people = res["people"][:10]
+    for p in people:
+        add_contact(con, cid, name=p["name"], role=p.get("role"), email=p.get("email"), phone=p.get("phone"), dept=p.get("dept") or "management",
+                    kind="person", confidence=70, source_url=p.get("source_url"), source="web")
+    stats["people"] = len(people)
+    # kişi ↔ e-posta eşleştirme (ad.soyad@ gibi) ve kalıptan tahmin
+    for g in crawler.guess_emails(people, domain, list(res["emails"]))[:4]:
+        if mail_domain_ok(domain):
+            add_contact(con, cid, name=g["name"], role=g.get("role"), email=g["email"], dept="person", kind="guess", confidence=35,
+                        source="tahmin", email_ok=1)
+    for k in con.execute("SELECT id,email FROM contacts WHERE company_id=? AND email IS NOT NULL AND (name IS NULL OR name='')", (cid,)).fetchall():
+        loc = re.sub(r"[^a-z.]", "", k["email"].split("@")[0].lower())
+        for p in con.execute("SELECT id,name,role FROM contacts WHERE company_id=? AND email IS NULL AND name IS NOT NULL AND kind='person'", (cid,)).fetchall():
+            toks = re.sub(r"[^a-zA-Zà-ÿ ]", "", p["name"]).lower().split()
+            if len(toks) >= 2 and loc in (f"{toks[0]}.{toks[-1]}", f"{toks[0][0]}.{toks[-1]}", f"{toks[0]}{toks[-1]}"):
+                con.execute("UPDATE contacts SET name=?, role=COALESCE(NULLIF(role,''),?) WHERE id=?", (p["name"], p["role"], k["id"]))
+                con.execute("DELETE FROM contacts WHERE id=?", (p["id"],))
+                break
+    legal = res["legal"]
+    legal_txt = " · ".join(x for x in (f"VAT {legal['vat']}" if legal.get("vat") else "", legal.get("register", "")) if x)
+    fill_company(con, cid, address=res["address"], description=res["description"], legal_id=legal_txt, lang=res["lang"],
+                 employees=res["facts"].get("employees"), founded=res["facts"].get("founded"))
+    seg = c["segment"]
+    if seg == "other":
+        if res["cocoa_signal"] >= 40 and res["business_type"] == "manufacturer":
+            seg = "chocolate_maker"
+        elif res["cocoa_signal"] >= 25 and res["business_type"] == "wholesale":
+            seg = "distributor"
+        elif res["cocoa_signal"] >= 40 and res["business_type"] == "retail":
+            seg = "retail_craft"
+    con.execute("UPDATE companies SET cocoa_signal=?, business_type=?, segment=?, enriched_at=?, enrich_pages=?, enrich_error=NULL, enrich_v=2 WHERE id=?",
+                (res["cocoa_signal"], res["business_type"], seg, today(), len(res["pages"]), cid))
+    update_data_score(con, cid)
+    con.commit()
+    return stats
 
 
 # ---------------------------------------------------------------- komutlar
@@ -369,9 +560,20 @@ def cmd_harvest_osm(a):
             n = 0
             for el in named:
                 t = el["tags"]
-                _, is_new = upsert_company(
+                cid, is_new = upsert_company(
                     con, t["name"], cc, t.get("addr:city"), t.get("website") or t.get("contact:website") or t.get("url"),
-                    seg, "osm", None, t.get("email") or t.get("contact:email"), t.get("phone") or t.get("contact:phone"))
+                    seg, "osm", None, t.get("email") or t.get("contact:email"), None)
+                if cid:
+                    street = " ".join(x for x in (t.get("addr:street"), t.get("addr:housenumber")) if x)
+                    zipcity = " ".join(x for x in (t.get("addr:postcode"), t.get("addr:city")) if x)
+                    ctr = el.get("center") or {}
+                    fill_company(con, cid, address=", ".join(x for x in (street, zipcity) if x), city=t.get("addr:city"),
+                                 phone=norm_phone_text(t.get("phone") or t.get("contact:phone") or t.get("contact:mobile"), cc),
+                                 whatsapp=norm_phone_text(t.get("contact:whatsapp"), cc), description=t.get("description"),
+                                 facebook=t.get("contact:facebook") or t.get("facebook"), instagram=t.get("contact:instagram") or t.get("instagram"),
+                                 twitter=t.get("contact:twitter") or t.get("twitter"), linkedin=t.get("contact:linkedin"),
+                                 lat=el.get("lat") or ctr.get("lat"), lon=el.get("lon") or ctr.get("lon"))
+                    update_data_score(con, cid)
                 n += is_new
             con.commit()
             n_cc += n
@@ -461,74 +663,140 @@ def cmd_markets(a):
 
 
 def cmd_enrich(a):
-    """Firma sitelerinden (iletişim/impressum sayfaları) e-posta toplar; robots.txt'e uyar."""
+    """Firma sitelerini derinlemesine tarar (iletişim, impressum, ekip, hakkında sayfaları) ve e-posta, telefon, kişi, sosyal medya,
+    adres, vergi/sicil no, çalışan sayısı ve kakao ilgi sinyalini kaydeder. Paralel çalışır, robots.txt'e uyar."""
     con = db()
-    rows = con.execute("SELECT id,website FROM companies WHERE website IS NOT NULL AND enriched_at IS NULL "
-                       "ORDER BY score DESC LIMIT ?", (a.limit,)).fetchall()
-    for r in rows:
-        if CANCEL.is_set():
-            print("Durduruldu.")
-            break
-        base = r["website"]
-        found = set()
+    workers = max(1, min(int(getattr(a, "workers", 0) or 6), 16))
+    pages = int(getattr(a, "pages", 0) or 8)
+    force = bool(getattr(a, "force", False))
+    where = "website IS NOT NULL AND website<>''" + ("" if force else " AND IFNULL(enrich_v,0)<2")
+    if getattr(a, "ids", None):
+        where += f" AND id IN ({','.join(str(int(i)) for i in a.ids)})"
+    rows = con.execute(f"SELECT id,name,website,country FROM companies WHERE {where} ORDER BY score DESC, id LIMIT ?", (a.limit,)).fetchall()
+    print(f"{len(rows)} firma taranacak ({workers} paralel, firma başına en fazla {pages} sayfa)…", flush=True)
+    tot = {"emails": 0, "phones": 0, "people": 0, "socials": 0, "ok": 0, "fail": 0}
+
+    def work(r):
         try:
-            rp = urllib.robotparser.RobotFileParser(urllib.parse.urljoin(base, "/robots.txt"))
-            rp.read()
-            allowed = lambda u: rp.can_fetch(UA, u)  # noqa: E731
-        except Exception:
-            allowed = lambda u: True  # noqa: E731
-        try:
-            home = http_get(base, timeout=15) if allowed(base) else ""
-        except Exception as e:
-            print(f"#{r['id']} {base}: {e}")
-            con.execute("UPDATE companies SET enriched_at=? WHERE id=?", (today(), r["id"]))
+            return r, crawler.crawl_site(r["website"], max_pages=pages, delay=1.0, cancel=CANCEL)
+        except Exception as e:  # tarayıcıdaki beklenmedik hata tek firmayı etkilesin
+            return r, {"ok": False, "errors": [str(e)], "final_url": ""}
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [ex.submit(work, r) for r in rows]
+        for fut in as_completed(futs):
+            if CANCEL.is_set():
+                for f in futs:
+                    f.cancel()
+                print("Durduruldu.", flush=True)
+                break
+            r, res = fut.result()
+            st = apply_enrichment(con, r["id"], res)
+            done += 1
+            if res["ok"]:
+                tot["ok"] += 1
+                for k in ("emails", "phones", "people", "socials"):
+                    tot[k] += st[k]
+                print(f"[{done}/{len(rows)}] {get_domain(r['website'])}: {st['emails']} e-posta, {st['phones']} tel, {st['people']} kişi, "
+                      f"{st['socials']} sosyal · kakao {res['cocoa_signal']} · {res['business_type']}", flush=True)
+            else:
+                tot["fail"] += 1
+                print(f"[{done}/{len(rows)}] {get_domain(r['website'])}: ulaşılamadı ({(res['errors'] or ['?'])[0][:90]})", flush=True)
+    print(f"Bitti: {tot['ok']} site tarandı, {tot['fail']} ulaşılamadı → {tot['emails']} e-posta, {tot['phones']} telefon, "
+          f"{tot['people']} kişi, {tot['socials']} sosyal hesap.", flush=True)
+
+
+WIKIDATA_TERMS = ["chocolate", "confectionery", "cocoa", "candy", "biscuit", "bakery", "ice cream"]
+
+
+def wikidata_query(terms):
+    union = " UNION ".join(
+        '{ SERVICE wikibase:mwapi { bd:serviceParam wikibase:api "EntitySearch" . bd:serviceParam wikibase:endpoint "www.wikidata.org" . '
+        f'bd:serviceParam mwapi:search "{t}" . bd:serviceParam mwapi:language "en" . ?ind wikibase:apiOutputItem mwapi:item . }} }}' for t in terms)
+    return ("SELECT DISTINCT ?c ?cLabel ?site ?cc ?cityLabel ?emp ?inc ?indLabel ?li ?fb ?tw ?ig WHERE { " + union +
+            " ?c wdt:P452 ?ind . ?c wdt:P856 ?site . OPTIONAL { ?c wdt:P17 ?country . ?country wdt:P297 ?cc . } OPTIONAL { ?c wdt:P159 ?city . } "
+            "OPTIONAL { ?c wdt:P1128 ?emp . } OPTIONAL { ?c wdt:P571 ?inc . } OPTIONAL { ?c wdt:P4264 ?li . } OPTIONAL { ?c wdt:P2013 ?fb . } "
+            "OPTIONAL { ?c wdt:P2002 ?tw . } OPTIONAL { ?c wdt:P2003 ?ig . } SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". } } LIMIT 4000")
+
+
+def cmd_harvest_wikidata(a):
+    """Wikidata'dan (ücretsiz, açık veri) çikolata/şekerleme/kakao/bisküvi sektöründeki bilinen firmaları web sitesi, ülke,
+    çalışan sayısı, kuruluş yılı ve sosyal hesaplarıyla çeker. Büyük/orta ölçekli alıcıları bulmak için iyi bir kaynaktır."""
+    con = db()
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    only = {c.strip().upper() for c in (getattr(a, "country", "") or "").split(",") if c.strip()}
+    q = wikidata_query(WIKIDATA_TERMS)
+    try:
+        req = urllib.request.Request("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q),
+                                     headers={"User-Agent": UA, "Accept": "application/sparql-results+json"})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+    except Exception as e:
+        log(f"Wikidata hatası: {e}")
+        return
+    new = seen = 0
+    for b in data.get("results", {}).get("bindings", []):
+        v = lambda k: b.get(k, {}).get("value")  # noqa: E731
+        name, site, cc = v("cLabel"), v("site"), (v("cc") or "").upper() or None
+        if not name or not site or re.fullmatch(r"Q\d+", name) or (only and cc not in only):
             continue
-        pages = [home]
-        links = re.findall(r'href=["\']([^"\']+)["\']', home, re.I)
-        extra = [urllib.parse.urljoin(base, l) for l in links
-                 if re.search(r"contact|kontakt|impressum|imprint|about|iletisim|contatt|mentions", l, re.I)]
-        for u in list(dict.fromkeys(extra))[:3]:
-            if allowed(u) and get_domain(u) == get_domain(base):
-                try:
-                    pages.append(http_get(u, timeout=15))
-                except Exception:
-                    pass
-                time.sleep(1)
-        for p in pages:
-            for m in EMAIL_RE.findall(p):
-                if not JUNK_EMAIL.search(m):
-                    found.add(m.lower())
-        for e in sorted(found)[:5]:
-            add_contact(con, r["id"], email=e, source="web")
-        con.execute("UPDATE companies SET enriched_at=? WHERE id=?", (today(), r["id"]))
-        print(f"#{r['id']} {get_domain(base)}: {len(found)} e-posta")
-        time.sleep(2)
+        ind = (v("indLabel") or "").lower()
+        seg = ("chocolate_maker" if re.search("chocolate|cocoa", ind) else "confectionery" if re.search("confection|candy|sweet|biscuit|cookie", ind)
+               else "ice_cream" if "ice" in ind else "bakery_ingredient" if "bakery" in ind else "other")
+        cid, is_new = upsert_company(con, name, cc, v("cityLabel"), site, seg, "wikidata")
+        if not cid:
+            continue
+        seen += 1
+        new += is_new
+        fill_company(con, cid, city=v("cityLabel"), employees=(v("emp") or "").split(".")[0] or None, founded=(v("inc") or "")[:4] or None,
+                     linkedin=f"https://www.linkedin.com/company/{v('li')}" if v("li") else None,
+                     facebook=f"https://www.facebook.com/{v('fb')}" if v("fb") else None,
+                     twitter=f"https://twitter.com/{v('tw')}" if v("tw") else None,
+                     instagram=f"https://www.instagram.com/{v('ig')}" if v("ig") else None)
+        update_data_score(con, cid)
     con.commit()
+    log(f"Wikidata: {seen} firma işlendi, {new} yeni eklendi. Sıradaki adım: Firma bul → Derin tarama (e-posta, telefon, kişi).")
 
 
-def cmd_score(a):
-    con = db()
-    imp = {r["iso"]: (r["rk"], r["from_tr"]) for r in con.execute("""
+def market_ranks(con):
+    return {r["iso"]: (r["rk"], r["from_tr"]) for r in con.execute("""
       SELECT w.importer_iso3 iso, IFNULL(SUM(t.value_usd),0) from_tr,
              (SELECT COUNT(*)+1 FROM (SELECT importer_iso3, SUM(value_usd) v FROM trade_flows WHERE partner='WORLD' GROUP BY 1) x
               WHERE x.v > SUM(w.value_usd)) rk
       FROM trade_flows w LEFT JOIN trade_flows t ON t.year=w.year AND t.hs=w.hs AND t.importer_iso3=w.importer_iso3 AND t.partner='TUR'
       WHERE w.partner='WORLD' GROUP BY w.importer_iso3""")}
-    n = 0
-    for c in con.execute("SELECT * FROM companies").fetchall():
-        s = SEGMENTS.get(c["segment"], SEGMENTS["other"])[0]
-        s += 5 if c["website"] else 0
-        ok = con.execute("SELECT COUNT(*) FROM contacts WHERE company_id=? AND email_ok=1", (c["id"],)).fetchone()[0]
-        s += 15 if ok else 0
-        info = imp.get(ISO2_TO_ISO3.get(c["country"] or ""))
-        if info:
-            s += max(0, 25 - info[0])  # ilk sıradaki ithalatçı ülke 24 puan alır
-            s += 10 if info[1] > 0 else 0
-        s = min(s, 100)
-        con.execute("UPDATE companies SET score=? WHERE id=?", (s, c["id"]))
-        n += 1
+
+
+def score_company(con, c, imp):
+    """Firma puanı 0-100: segment + site + e-posta + kakao sinyali + firma tipi + karar verici + pazar büyüklüğü."""
+    s = SEGMENTS.get(c["segment"], SEGMENTS["other"])[0]
+    s += 5 if c["website"] else 0
+    ok = con.execute("SELECT COUNT(*) FROM contacts WHERE company_id=? AND email_ok=1", (c["id"],)).fetchone()[0]
+    s += 15 if ok else 0
+    s += min(15, (c["cocoa_signal"] or 0) // 7)  # sitesinde kakao/çikolata geçiyor mu
+    s += {"manufacturer": 8, "wholesale": 5, "retail": -8}.get(c["business_type"] or "", 0)
+    ks = con.execute("SELECT dept,name,phone FROM contacts WHERE company_id=?", (c["id"],)).fetchall()
+    s += 3 if (c["phone"] or any(k["phone"] for k in ks)) else 0
+    s += 5 if any(k["name"] for k in ks) else 0
+    s += 6 if any(k["dept"] in ("purchasing", "export", "sales") for k in ks) else 0
+    info = imp.get(ISO2_TO_ISO3.get(c["country"] or ""))
+    if info:
+        s += max(0, 25 - info[0])  # ilk sıradaki ithalatçı ülke 24 puan alır
+        s += 10 if info[1] > 0 else 0
+    s = max(0, min(s, 100))
+    con.execute("UPDATE companies SET score=? WHERE id=?", (s, c["id"]))
+    update_data_score(con, c["id"])
+    return s
+
+
+def cmd_score(a):
+    con = db()
+    imp = market_ranks(con)
+    rows = con.execute("SELECT * FROM companies").fetchall()
+    for c in rows:
+        score_company(con, c, imp)
     con.commit()
-    print(f"{n} firma puanlandı.")
+    print(f"{len(rows)} firma puanlandı.")
 
 
 def fmt_row(r):
@@ -647,6 +915,15 @@ class _Safe(dict):
         return "{" + k + "}"
 
 
+def best_contact(con, cid):
+    """E-postası geçerli kişiler arasında en uygununu seçer: gerçek adres > tahmin; satın alma > ihracat > satış > yönetim > kişi > genel."""
+    rows = con.execute("SELECT * FROM contacts WHERE company_id=? AND email_ok=1 AND email IS NOT NULL", (cid,)).fetchall()
+    if not rows:
+        return None
+    return sorted(rows, key=lambda k: (k["kind"] == "guess", crawler.DEPT_PRIORITY.get(k["dept"] or "other", 12), -(k["confidence"] or 0),
+                                       k["name"] is None, k["id"]))[0]
+
+
 def render_email(con, cid, lang="en", template="cold"):
     """(alıcı_e-posta | None, metin) döner; hata durumunda ValueError."""
     c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
@@ -657,8 +934,10 @@ def render_email(con, cid, lang="en", template="cold"):
     path = os.path.join(HERE, "templates", f"{lang}_{template}.txt")
     if not os.path.exists(path):
         raise ValueError(f"Şablon yok: {lang}_{template}")
-    k = con.execute("SELECT * FROM contacts WHERE company_id=? AND email_ok=1 ORDER BY (name IS NULL), id", (cid,)).fetchone()
-    ctx = _Safe(config(), company=c["name"], contact=(k["name"] if k and k["name"] else "Sir or Madam" if lang == "en" else "Damen und Herren"),
+    k = best_contact(con, cid)
+    name = k["name"] if k and k["name"] else None
+    greeting = (f"Dear {name}" if name else "Dear Sir or Madam") if lang == "en" else (f"Guten Tag {name}" if name else "Sehr geehrte Damen und Herren")
+    ctx = _Safe(config(), company=c["name"], contact=(name or ("Sir or Madam" if lang == "en" else "Damen und Herren")), greeting=greeting,
                 segment_label=SEGMENTS.get(c["segment"], SEGMENTS["other"])[1])
     with open(path, encoding="utf-8") as f:
         return (k["email"] if k else None), f.read().format_map(ctx)
@@ -697,15 +976,30 @@ def cmd_report(a):
 
 def cmd_export(a):
     con = db()
-    rows = con.execute("""SELECT c.id,c.name,c.country,c.city,c.website,c.segment,c.score,c.status,c.last_contacted,c.next_followup,
+    rows = con.execute("""SELECT c.id,c.name,c.country,c.city,c.address,c.website,c.segment,c.business_type,c.score,c.data_score,c.status,c.phone,c.whatsapp,
+        c.linkedin,c.facebook,c.instagram,c.twitter,c.youtube,c.legal_id,c.employees,c.founded,c.cocoa_signal,c.value_usd,c.product,
+        c.last_contacted,c.next_followup,c.source,c.description,
         (SELECT group_concat(email,'; ') FROM contacts k WHERE k.company_id=c.id AND k.email_ok=1) emails,
-        (SELECT group_concat(phone,'; ') FROM contacts k WHERE k.company_id=c.id AND k.phone IS NOT NULL) phones
+        (SELECT group_concat(name||' ('||IFNULL(role,'')||')','; ') FROM contacts k WHERE k.company_id=c.id AND k.name IS NOT NULL) people
         FROM companies c ORDER BY score DESC""").fetchall()
     with open(a.file, "w", newline="", encoding="utf-8-sig") as f:  # utf-8-sig: Excel Türkçe karakterleri doğru açar
         w = csv.writer(f)
         w.writerow(rows[0].keys() if rows else [])
         w.writerows([tuple(r) for r in rows])
     print(f"{len(rows)} satır → {a.file}")
+
+
+def cmd_export_contacts(a):
+    """Her satır bir kişi/e-posta/telefon: toplu posta (mail merge) için."""
+    con = db()
+    rows = con.execute("""SELECT c.id company_id, c.name company, c.country, c.website, c.segment, c.score, c.status,
+        k.name contact, k.role, k.dept, k.email, k.email_ok, k.kind, k.confidence, k.phone, k.source_url
+        FROM contacts k JOIN companies c ON c.id=k.company_id ORDER BY c.score DESC, c.id, k.confidence DESC""").fetchall()
+    with open(a.file, "w", newline="", encoding="utf-8-sig") as f:
+        w = csv.writer(f)
+        w.writerow(rows[0].keys() if rows else [])
+        w.writerows([tuple(r) for r in rows])
+    print(f"{len(rows)} kişi/iletişim → {a.file}")
 
 
 def main():
@@ -730,8 +1024,11 @@ def main():
     s.add_argument("--hs"); s.add_argument("--year", type=int); s.add_argument("--force", action="store_true", help="çekilmiş olanları da yeniden çek")
     s = add("markets", cmd_markets, "hedef pazar sıralaması")
     s.add_argument("--hs"); s.add_argument("--year", type=int); s.add_argument("--top", type=int, default=30)
-    s = add("enrich", cmd_enrich, "sitelerden e-posta topla")
-    s.add_argument("--limit", type=int, default=50)
+    s = add("enrich", cmd_enrich, "sitelerden e-posta, telefon, kişi, sosyal medya, adres topla (derin tarama)")
+    s.add_argument("--limit", type=int, default=50); s.add_argument("--workers", type=int, default=6)
+    s.add_argument("--pages", type=int, default=8); s.add_argument("--force", action="store_true", help="daha önce taranmışları da yeniden tara")
+    s = add("harvest-wikidata", cmd_harvest_wikidata, "Wikidata'dan bilinen çikolata/şekerleme firmalarını çek")
+    s.add_argument("--country", default="", help="ISO2 virgülle (boş = hepsi)")
     add("score", cmd_score, "firmaları puanla")
     s = add("list", cmd_list, "firmaları listele")
     s.add_argument("--status"); s.add_argument("--country"); s.add_argument("--segment")
@@ -747,6 +1044,7 @@ def main():
     s.add_argument("id", type=int); s.add_argument("--lang", default="en"); s.add_argument("--template", default="cold")
     add("report", cmd_report, "özet rapor")
     s = add("export", cmd_export, "CSV (Excel) dışa aktar"); s.add_argument("file")
+    s = add("export-contacts", cmd_export_contacts, "kişi/e-posta listesini CSV'ye aktar (toplu posta için)"); s.add_argument("file")
 
     a = p.parse_args()
     a.fn(a)

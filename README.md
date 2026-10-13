@@ -21,6 +21,24 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
    (Git istemezseniz GitHub'da **Code → Download ZIP**.) Güncellemek için klasörde `git pull`; `leads.db` verileriniz git'e girmez, silinmez.
 3. `baslat.bat` dosyasına çift tıklayın; tarayıcıda panel açılır. (Komut satırından: `py web.py`. Windows'ta `python3` değil `py` veya `python` yazılır.)
 
+## Derin veri toplama (iletişim bilgileri)
+
+**Firma bul → Seçili ülkelerde bul ve tara** (ya da komut satırında `python3 leads.py enrich`) her firmanın web sitesine girip herkese açık sayfalarını (ana sayfa, iletişim, impressum, ekip, hakkında, ürünler, sitemap) gezer ve şunları kaydeder:
+
+- **E-postalar** (gizlenmiş `[at]` ve Cloudflare şifreli olanlar dahil), departmana göre sınıflandırılır: satın alma, ihracat, satış, yönetim, genel… Üçüncü taraf (ajans/hosting) adresleri alınmaz. Alan adının MX kaydı kontrol edilir.
+- **Telefon, WhatsApp, adres** (JSON-LD yapısal veri + Impressum), **sosyal medya** (LinkedIn, Facebook, Instagram, X, YouTube).
+- **Kişiler**: Impressum'daki yöneticiler, ekip sayfasındaki satın alma/satış/ihracat sorumluları (ad + görev). Sitede ad.soyad@ kalıbı varsa diğer kişiler için adres **tahmin** edilir ve "tahmin" diye işaretlenir.
+- **Firma bilgisi**: vergi/sicil no (VAT, HRB, KvK, SIRET…), çalışan sayısı, kuruluş yılı, açıklama, site dili.
+- **Sinyaller**: sitede kakao/çikolata geçme yoğunluğu (0–100), üretici/toptancı/perakende tahmini. Puanlama bunları kullanır; segment "Diğer" ise otomatik düzeltilir.
+- **Veri doluluğu** (%0–100) her firmada ve Firma bul sayfasında genel olarak görünür; Firmalar listesinde buna göre sıralanır.
+
+Ek kaynaklar: **Bilinen firmalar (Wikidata)** düğmesi/komutu (`harvest-wikidata`) büyük ve orta ölçekli şirketleri çeker; OpenStreetMap'ten telefon, adres, sosyal hesap ve konum da alınır.
+Hedefli e-posta için: Firmalar sayfasında 🎯 *satın alma/ihracat/satış* filtresi, ve **Kişiler** CSV'si (`export-contacts`) toplu posta içindir.
+
+Sınırlar ve etik: robots.txt'e uyulur, siteler yavaş taranır, LinkedIn gibi giriş gerektiren/taramayı yasaklayan platformlardan veri çekilmez. Kişi adları Impressum gibi yasal zorunlulukla yayımlanan sayfalardan gelir; yalnızca B2B satış amacıyla kullanın, bireysel (gmail vb.) adreslere toplu yazmayın.
+
+Testler: `python3 -m unittest discover tests`
+
 ## Web arayüzü
 
 ```bash

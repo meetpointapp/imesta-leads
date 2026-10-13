@@ -1,6 +1,6 @@
 Betreff: Kakaopulver & Kakaobutter aus der Türkei – {company}
 
-Sehr geehrte Damen und Herren,
+{greeting},
 
 mein Name ist {sender_name} von {company_name}, einem türkischen Kakaoverarbeiter und Exporteur. Wir liefern {products} an Lebensmittelhersteller in Europa und im Nahen Osten.
 

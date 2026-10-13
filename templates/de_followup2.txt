@@ -1,6 +1,6 @@
 Betreff: Letzte Nachricht – Kakaomuster für {company}
 
-Sehr geehrte Damen und Herren,
+{greeting},
 
 dies ist meine letzte Nachricht, damit ich Ihr Postfach nicht unnötig fülle. Sollte das Thema Kakaobeschaffung (neue Rezepturen, Preisdruck, zweiter Lieferant) für Sie relevant werden, erstellen wir Ihnen gern innerhalb von 24 Stunden ein Angebot.
 
