@@ -26,7 +26,13 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 ```bash
 python3 web.py              # http://127.0.0.1:8765
 ```
-Sayfalar: **Panel** (başlangıç adımları, özet kartlar, satış hattı), **Firmalar** (arama/filtre, Excel'e aktarma), **Firma detayı** (kişiler, geçmiş, takip, e-posta taslağı), **Pazarlar** (ülke sıralaması + her ülke için tek tıkla **Firma bul** düğmesi), **Firma bul** (seçtiğin ülkelerde otomatik firma bulma + e-posta toplama + puanlama), **Firma ekle**, **İçe aktar** (CSV).
+Sayfalar:
+- **Bugün** – her sabah ilk açılacak ekran: geciken takipler, bugünkü işler, cevap bekleyen sıcak müşteriler, soğuyanlar, yazılacak en iyi firmalar. Her satırda tek tıkla *Mail attım / Aradım / Cevap geldi / 3 gün ertele*; takip tarihi otomatik kurulur (1. mailden sonra 5 gün, 2.'den sonra 7, 3.'den sonra 14, sonra 30).
+- **Satış hattı** – kartları sürükle-bırak ile durumlar arasında taşı; fırsat değeri ve soğuyan müşteri uyarısı.
+- **Firmalar** – sütun başlığına tıklayarak sıralama, filtre, yıldızlama, sayfalama, **toplu işlem** (silme, durum, segment) ve Excel'e aktarma. Silinen firma, otomatik taramalarda tekrar eklenmez.
+- **Firma detayı** – sıradaki adım önerisi, tek tıkla kayıt, kişiler, geçmiş, düzenleme, sil, e-posta taslağı (ülkeye ve gönderilen e-posta sayısına göre dil/şablon önerir).
+- **Pazarlar** – ülke sıralaması + her ülke için **Firma bul** düğmesi. **Firma bul** – otomatik firma + e-posta toplama. **Liste yükle** / **Firma ekle**.
+- **Yedek:** `leads.db` her gün otomatik olarak `backups/` klasörüne yedeklenir (son 14 gün); toplu/tekli silmeden önce de ek yedek alınır.
 
 - Renkler ve logo: `config.json` → `theme` (`brand`, `accent`, `cream`, `cocoa`, `logo_url`). imestafood.com'a erişemediğim için kakao kahvesi + krem + altın paleti kullandım; kurumsal renk kodlarınızı buraya yazın.
 - Ekip içinde paylaşmak için: `WEB_PASSWORD=sifreniz python3 web.py --host 0.0.0.0` (kullanıcı adı: `imesta`). Şifresiz sadece kendi bilgisayarınızda (127.0.0.1) açılır. İnternete açacaksanız HTTPS arkasına (ör. Caddy/nginx) koyun.

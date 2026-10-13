@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS contacts(
 CREATE TABLE IF NOT EXISTS activities(
   id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   ts TEXT DEFAULT CURRENT_TIMESTAMP, kind TEXT, summary TEXT);
+CREATE TABLE IF NOT EXISTS ignored(key TEXT PRIMARY KEY, name TEXT, deleted_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS suppressed(value TEXT PRIMARY KEY, added_at TEXT DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS trade_flows(
   year INTEGER, hs TEXT, importer_iso3 TEXT, importer TEXT, partner TEXT,  -- partner: WORLD | TUR
@@ -81,12 +82,71 @@ CREATE TABLE IF NOT EXISTS trade_flows(
 
 
 # ---------------------------------------------------------------- yardımcılar
+NEW_COLUMNS = [("value_usd", "REAL"), ("product", "TEXT"), ("lost_reason", "TEXT"),
+               ("starred", "INTEGER DEFAULT 0"), ("snoozed_until", "TEXT")]
+
+
+def migrate(con):
+    """Eski veritabanlarına yeni sütunları ekler (veri kaybı olmaz)."""
+    cols = {r[1] for r in con.execute("PRAGMA table_info(companies)")}
+    for name, typ in NEW_COLUMNS:
+        if name not in cols:
+            con.execute(f"ALTER TABLE companies ADD COLUMN {name} {typ}")
+    con.commit()
+
+
 def db():
-    con = sqlite3.connect(DB_PATH)
+    con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
+    migrate(con)
     return con
+
+
+def backup_db(keep=14, force=False):
+    """Günde bir kez backups/ klasörüne tutarlı yedek alır, eskileri siler. Yedek dosya yolunu döner."""
+    if not os.path.exists(DB_PATH):
+        return None
+    folder = os.path.join(os.path.dirname(DB_PATH), "backups")
+    os.makedirs(folder, exist_ok=True)
+    now = dt.datetime.now()
+    path = os.path.join(folder, f"leads-{now:%Y%m%d}" + (f"-{now:%H%M%S}" if force else "") + ".db")
+    if os.path.exists(path) and not force:
+        return path
+    src = sqlite3.connect(DB_PATH)
+    dst = sqlite3.connect(path)
+    with dst:
+        src.backup(dst)
+    src.close()
+    dst.close()
+    for old in sorted(f for f in os.listdir(folder) if f.startswith("leads-") and f.endswith(".db"))[:-keep]:
+        os.remove(os.path.join(folder, old))
+    return path
+
+
+def ignore_keys(name, country, domain):
+    keys = []
+    if domain:
+        keys.append("d:" + domain)
+    if name:
+        keys.append(f"n:{name.strip().lower()}|{(country or '').upper()}")
+    return keys
+
+
+def delete_companies(con, ids):
+    """Firmaları (kişi ve geçmişiyle) siler; aynı firma sonraki taramalarda tekrar eklenmesin diye 'ignored'a yazar."""
+    n = 0
+    for cid in ids:
+        r = con.execute("SELECT name,country,domain FROM companies WHERE id=?", (cid,)).fetchone()
+        if not r:
+            continue
+        for k in ignore_keys(r["name"], r["country"], r["domain"]):
+            con.execute("INSERT OR IGNORE INTO ignored(key,name) VALUES(?,?)", (k, r["name"]))
+        con.execute("DELETE FROM companies WHERE id=?", (cid,))
+        n += 1
+    con.commit()
+    return n
 
 
 def config():
@@ -155,8 +215,9 @@ def http_get(url, timeout=20, headers=None):
 
 
 def upsert_company(con, name, country=None, city=None, website=None, segment="other",
-                   source=None, notes=None, email=None, phone=None):
-    """Aynı alan adı (veya aynı ad+ülke) varsa tekrar eklemez. (id, yeni_mi) döner."""
+                   source=None, notes=None, email=None, phone=None, manual=False):
+    """Aynı alan adı (veya aynı ad+ülke) varsa tekrar eklemez. (id, yeni_mi) döner.
+    Daha önce silinmiş firmalar otomatik kaynaklardan (manual=False) tekrar eklenmez; elle eklemek silinenler listesinden çıkarır."""
     name = (name or "").strip()
     if not name:
         return None, False
@@ -165,6 +226,13 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
     country = (country or "").upper() or None
     if segment not in SEGMENTS:
         segment = "other"
+    keys = ignore_keys(name, country, domain)
+    if keys:
+        q = ",".join("?" * len(keys))
+        if manual:
+            con.execute(f"DELETE FROM ignored WHERE key IN ({q})", keys)
+        elif con.execute(f"SELECT 1 FROM ignored WHERE key IN ({q})", keys).fetchone():
+            return None, False
     row = None
     if domain:
         row = con.execute("SELECT id FROM companies WHERE domain=?", (domain,)).fetchone()
@@ -497,17 +565,32 @@ def cmd_show(a):
         print(f"  {x['ts'][:16]} [{x['kind']}] {x['summary']}")
 
 
+EMAIL_CADENCE = [5, 7, 14, 30]  # 1., 2., 3., 4.+ e-postadan sonra kaç gün içinde takip
+NEXT_TEMPLATE = ["cold", "followup1", "followup2"]  # sıradaki e-posta şablonu (gönderilen e-posta sayısına göre)
+
+
+def email_count(con, cid):
+    return con.execute("SELECT COUNT(*) FROM activities WHERE company_id=? AND kind='email'", (cid,)).fetchone()[0]
+
+
 def do_log(con, cid, kind, summary, status=None, followup=None):
-    """Aktivite kaydeder, takip tarihini ve durumu günceller. Sonraki takip tarihini döner."""
-    cur = con.execute("SELECT status FROM companies WHERE id=?", (cid,)).fetchone()
+    """Aktivite kaydeder, takip tarihini ve durumu günceller. Sonraki takip tarihini döner (not kaydı takibi bozmaz)."""
+    cur = con.execute("SELECT status,next_followup FROM companies WHERE id=?", (cid,)).fetchone()
     if not cur:
         raise ValueError("Bulunamadı")
     if status and status not in STATUSES:
         raise ValueError("Durumlar: " + ", ".join(STATUSES))
     con.execute("INSERT INTO activities(company_id,kind,summary) VALUES(?,?,?)", (cid, kind, summary))
-    days = followup if followup is not None else FOLLOWUP_DAYS.get(kind)
-    nxt = (dt.date.today() + dt.timedelta(days=days)).isoformat() if days else None
-    sets, p = ["next_followup=?"], [nxt]
+    days = followup
+    if days is None and kind == "email":
+        days = EMAIL_CADENCE[min(email_count(con, cid), len(EMAIL_CADENCE)) - 1]  # bu e-posta dahil sayıldı
+    elif days is None:
+        days = FOLLOWUP_DAYS.get(kind)
+    sets, p = [], []
+    if days is not None or kind != "note":
+        nxt = (dt.date.today() + dt.timedelta(days=days)).isoformat() if days else None
+        sets.append("next_followup=?")
+        p.append(nxt)
     if kind in ("email", "call", "sample", "meeting"):
         sets.append("last_contacted=?")
         p.append(today())
@@ -516,10 +599,20 @@ def do_log(con, cid, kind, summary, status=None, followup=None):
         sets.append("status=?")
         p.append(status)
         if status in ("won", "lost"):
-            p[0] = None  # takip gerekmez
-    con.execute(f"UPDATE companies SET {','.join(sets)} WHERE id=?", p + [cid])
+            sets.append("next_followup=NULL")
+    if sets:
+        con.execute(f"UPDATE companies SET {','.join(sets)}, snoozed_until=NULL WHERE id=?", p + [cid])
     con.commit()
-    return p[0]
+    row = con.execute("SELECT next_followup FROM companies WHERE id=?", (cid,)).fetchone()
+    return row[0]
+
+
+def snooze(con, cid, days=3):
+    """Takibi birkaç gün erteler (aktivite kaydı oluşturmaz)."""
+    d = (dt.date.today() + dt.timedelta(days=days)).isoformat()
+    con.execute("UPDATE companies SET next_followup=?, snoozed_until=? WHERE id=?", (d, d, cid))
+    con.commit()
+    return d
 
 
 def cmd_log(a):
@@ -598,7 +691,8 @@ def cmd_report(a):
     for r in q("SELECT * FROM companies WHERE status='new' AND id IN (SELECT company_id FROM contacts WHERE email_ok=1) "
                "ORDER BY score DESC LIMIT 10"):
         print("  " + fmt_row(r))
-    print(f"\nTakibi gelmiş: {q('SELECT COUNT(*) FROM companies WHERE next_followup<=? AND status NOT IN (\"won\",\"lost\")', today())[0][0]}")
+    due = q("SELECT COUNT(*) FROM companies WHERE next_followup<=? AND status NOT IN ('won','lost')", today())[0][0]
+    print(f"\nTakibi gelmiş: {due}")
 
 
 def cmd_export(a):
