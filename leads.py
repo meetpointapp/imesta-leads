@@ -14,6 +14,7 @@ import re
 import socket
 import sqlite3
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -234,66 +235,81 @@ OSM_FILTERS = {  # segment -> Overpass filtreleri (hafif tutuldu: ülke çapınd
     "ice_cream": ['["craft"="ice_cream"]', '["shop"="ice_cream"]', '["product"="ice_cream"]'],
 }
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
-                 "https://overpass.private.coffee/api/interpreter"]
+                 "https://overpass.private.coffee/api/interpreter", "https://overpass.openstreetmap.fr/api/interpreter"]
+SEG_LABEL = {"retail_craft": "butik/perakende", "chocolate_maker": "çikolata üreticisi", "ice_cream": "dondurma",
+             "bakery_ingredient": "pastane/toptan"}
+CANCEL = threading.Event()  # web arayüzündeki "Durdur" düğmesi bunu kurar
 
 
 def overpass(query, log):
-    """Yedek sunucuları sırayla dener; hata veya zaman aşımı (remark) durumunda sıradakine geçer."""
+    """Sunucuları sırayla dener; 504/429 (meşgul) ve zaman aşımında bekleyip yedeğe geçer. Çalışan sunucuyu öne alır."""
     body = urllib.parse.urlencode({"data": query}).encode()
     last = "bilinmeyen hata"
-    for url in OVERPASS_URLS:
+    for url in list(OVERPASS_URLS):
+        host = url.split("/")[2]
         for attempt in range(2):
+            if CANCEL.is_set():
+                raise RuntimeError("iptal edildi")
             try:
                 req = urllib.request.Request(url, data=body, headers={"User-Agent": UA})
                 with urllib.request.urlopen(req, timeout=240) as r:
                     data = json.loads(r.read().decode("utf-8", "replace"))
             except Exception as e:
-                last = f"{url.split('/')[2]}: {e}"
-                log(f"    ! {last}")
-                time.sleep(5 * (attempt + 1))  # 429/504 (sunucu meşgul) için bekle
+                code = getattr(e, "code", None)
+                last = f"{host}: " + (f"sunucu meşgul (HTTP {code})" if code in (429, 502, 503, 504) else str(e))
+                wait = 10 * (attempt + 1)
+                log(f"    ! {last} – {wait} sn sonra {'tekrar denenecek' if attempt == 0 else 'yedek sunucuya geçilecek'}")
+                CANCEL.wait(wait)
                 continue
             remark = data.get("remark", "")
             if remark and not data.get("elements"):
-                last = f"{url.split('/')[2]}: {remark}"
-                log(f"    ! {last}")
-                break  # bu sunucuda zaman aşımı/bellek sınırı: yedeğe geç
+                last = f"{host}: {remark}"
+                log(f"    ! {last} – yedek sunucuya geçiliyor")
+                break  # zaman aşımı/bellek sınırı: yedeğe geç
+            OVERPASS_URLS.remove(url)
+            OVERPASS_URLS.insert(0, url)  # çalışan sunucuyu bir sonraki sorgu için öne al
             return data
     raise RuntimeError(last)
 
 
 def cmd_harvest_osm(a):
-    """OpenStreetMap'ten (ücretsiz) çikolata/şekerleme/dondurma firmalarını çeker. Her filtre ayrı sorgudur."""
+    """OpenStreetMap'ten (ücretsiz) çikolata/şekerleme/dondurma firmalarını çeker. Ülke başına segment başına 1 sorgu."""
     con = db()
     segs = a.segments.split(",") if a.segments else ["chocolate_maker", "retail_craft", "ice_cream"]
     segs = [s for s in segs if s in OSM_FILTERS] or ["chocolate_maker"]
     log = lambda m: print(m, flush=True)  # noqa: E731
     total = 0
     for cc in [c.strip() for c in a.country.upper().split(",") if re.fullmatch(r"[A-Z]{2}", c.strip())]:
+        if CANCEL.is_set():
+            log("Durduruldu.")
+            break
         log(f"{cc}:")
         n_cc = 0
         for seg in segs:
-            for flt in OSM_FILTERS[seg]:
-                q = (f'[out:json][timeout:180][maxsize:536870912];area["ISO3166-1"="{cc}"][admin_level=2]->.a;'
-                     f'nwr{flt}(area.a);out tags center 3000;')
-                try:
-                    data = overpass(q, log)
-                except Exception as e:
-                    log(f"  {flt}: BAŞARISIZ ({e})")
-                    continue
-                els = data.get("elements", [])
-                named = [e for e in els if e.get("tags", {}).get("name")]
-                n = 0
-                for el in named:
-                    t = el["tags"]
-                    _, is_new = upsert_company(
-                        con, t["name"], cc, t.get("addr:city"), t.get("website") or t.get("contact:website") or t.get("url"),
-                        seg, "osm", None, t.get("email") or t.get("contact:email"), t.get("phone") or t.get("contact:phone"))
-                    n += is_new
-                con.commit()
-                n_cc += n
-                warn = " (3000 sınırına ulaştı, eksik olabilir)" if len(els) >= 3000 else ""
-                log(f"  {flt}: {len(els)} kayıt, {len(named)} isimli, {n} yeni{warn}")
-                time.sleep(2)
+            if CANCEL.is_set():
+                break
+            parts = "".join(f"nwr{flt}(area.a);" for flt in OSM_FILTERS[seg])
+            q = (f'[out:json][timeout:120][maxsize:268435456];area["ISO3166-1"="{cc}"][admin_level=2]->.a;'
+                 f'({parts});out tags center 3000;')
+            try:
+                data = overpass(q, log)
+            except Exception as e:
+                log(f"  {SEG_LABEL.get(seg, seg)}: BAŞARISIZ ({e})")
+                continue
+            els = data.get("elements", [])
+            named = [e for e in els if e.get("tags", {}).get("name")]
+            n = 0
+            for el in named:
+                t = el["tags"]
+                _, is_new = upsert_company(
+                    con, t["name"], cc, t.get("addr:city"), t.get("website") or t.get("contact:website") or t.get("url"),
+                    seg, "osm", None, t.get("email") or t.get("contact:email"), t.get("phone") or t.get("contact:phone"))
+                n += is_new
+            con.commit()
+            n_cc += n
+            warn = " (3000 sınırına ulaştı, eksik olabilir)" if len(els) >= 3000 else ""
+            log(f"  {SEG_LABEL.get(seg, seg)}: {len(els)} kayıt, {len(named)} isimli, {n} yeni{warn}")
+            CANCEL.wait(2)
         total += n_cc
         log(f"{cc}: toplam {n_cc} yeni firma")
     log(f"Toplam yeni: {total}")
@@ -382,6 +398,9 @@ def cmd_enrich(a):
     rows = con.execute("SELECT id,website FROM companies WHERE website IS NOT NULL AND enriched_at IS NULL "
                        "ORDER BY score DESC LIMIT ?", (a.limit,)).fetchall()
     for r in rows:
+        if CANCEL.is_set():
+            print("Durduruldu.")
+            break
         base = r["website"]
         found = set()
         try:

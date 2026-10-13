@@ -388,7 +388,9 @@ def page_tools(con, q):
     if JOB["running"]:
         last = [l for l in JOB["log"].strip().split("\n") if l.strip()][-1:] or ["Başlıyor…"]
         status = (f'<div class="flash"><div class="spin"></div><div><b>Çalışıyor: {esc(JOB["name"])}</b><br>'
-                  f'<small class="muted">{esc(last[0].strip())}</small></div></div><script>setTimeout(()=>location.reload(),5000)</script>')
+                  f'<small class="muted">{esc(last[0].strip())}</small></div>'
+                  f'<form method="post" action="/job/cancel" style="margin-left:auto"><button class="ghost sm">Durdur</button></form></div>'
+                  f'<script>setTimeout(()=>location.reload(),5000)</script>')
     else:
         status = ""
     if JOB["summary"] and not JOB["running"]:
@@ -423,6 +425,7 @@ def run_job(name, fn):
         if JOB["running"]:
             return False
         JOB.update(running=True, name=name, log="", summary="")
+        leads.CANCEL.clear()
 
     class Live:  # çıktıyı iş sürerken sayfada gösterebilmek için anında JOB["log"]'a yazar
         def write(self, t):
@@ -456,8 +459,9 @@ def find_firms(countries):
             c.close()
     b_firms, b_mail = stats()
     leads.cmd_harvest_osm(argparse.Namespace(country=",".join(countries), segments=None))
-    print("\n--- E-posta aranıyor (yeni firmaların siteleri) ---", flush=True)
-    leads.cmd_enrich(argparse.Namespace(limit=60))
+    if not leads.CANCEL.is_set():
+        print("\n--- E-posta aranıyor (yeni firmaların siteleri) ---", flush=True)
+        leads.cmd_enrich(argparse.Namespace(limit=60))
     leads.cmd_score(argparse.Namespace())
     a_firms, a_mail = stats()
     JOB["summary"] = f"{a_firms - b_firms} yeni firma bulundu, {a_mail - b_mail} firmanın e-postası eklendi ve hepsi puanlandı."
@@ -565,6 +569,9 @@ class H(BaseHTTPRequestHandler):
                 return self._redirect(f.get("back") or "/", "Engelleme listesine eklendi")
             if path.startswith("/job/"):
                 kind = path[5:]
+                if kind == "cancel":
+                    leads.CANCEL.set()
+                    return self._redirect("/tools", "Durduruluyor, birkaç saniye sürebilir")
                 if kind == "find":
                     ccs = [c.upper() for c in multi.get("country", []) + multi.get("c", []) if c.upper() in COUNTRIES]
                     ccs = list(dict.fromkeys(ccs))
