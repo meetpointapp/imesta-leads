@@ -493,10 +493,41 @@ WHOLE = re.compile(r"wholesale|gro(?:ß|ss)handel|distributor|distribution|\bb2b
 RETAIL = re.compile(r"add to cart|warenkorb|in den warenkorb|shopping cart|checkout|sepete ekle|sepet\b|online shop|webshop|panier|ajouter au panier|öffnungszeiten|opening hours|gift card|geschenkgutschein", re.I)
 
 
-def signals(text):
+# Kakao KULLANAN ürün kategorileri (çok dilli anahtar sözcükler): firma neyi üretiyor?
+CATEGORIES = {
+    "biscuit": r"biscuit|biscott|keks|kekse|geb[aä]ck|galleta|ciastk|herbatnik|bisk[uü]vi|cookie|cracker|بسكويت|печень|biscuiterie",
+    "wafer": r"wafer|waffel|wafel|wafle|gofret|ويفر|вафл",
+    "cake": r"\bcakes?\b|kuchen|torte\b|\btarte?\b|cupcake|muffin|brownie|\bkek\b|ciasto|ciast|كيك|торт|gateau|gâteau|tortas?\b|plumcake",
+    "bakery": r"bakery|b[aä]ckerei|baeckerei|backwaren|backzutat|panific|boulang|panader|bakkerij|piekarni|f[ıi]r[ıi]n|unlu mam|مخبز|пекарн|pastry|patisserie|konditorei|viennoiserie|croissant",
+    "ice_cream": r"ice[\s\-]?cream|speiseeis|\beis\b|gelato|helado|\bglaces?\b|\bijs\b|lody|dondurma|آيس كريم|мороженое|frozen dessert|eiscreme",
+    "dairy": r"dairy|molkerei|milchprodukt|latticin|laiterie|l[aá]cteo|zuivel|mleczar|s[uü]t [uü]r[uü]n|ألبان|молоч|pudding|joghurt|yogurt|dessert",
+    "beverage": r"beverage|getr[aä]nk|bevande|boissons|bebidas|dranken|napoje|i[cç]ecek|مشروب|напитк|instant drink|milk drink|cocoa drink|kakaogetr[aä]nk|malt drink|sirop",
+    "cereal_snack": r"cereal|m[uü]sli|muesli|cornflake|granola|snack|riegel|protein bar|c[ée]r[ée]ale|tah[ıi]l gevre|الحبوب|crunchy|müsliriegel",
+    "spread": r"spread|aufstrich|cr[eè]me [aà] tartiner|crema spalmabile|nougat|praline cream|nutella|f[ıi]nd[ıi]k ezmesi|hazelnut cream|fillings?|f[uü]llung|fourrage|farcit|topping|glaz",
+    "confectionery": r"confection|konfekt|s[uü](?:ß|ss)waren|suesswaren|dolciumi|confiserie|confiter[ií]a|snoep|cukiern|[sş]ekerleme|حلويات|кондитер|candy|bonbon|gummy|lollipop|dragée|dragee|marzipan",
+    "chocolate": r"chocolat|schokolad|cioccolat|chocolate|cokolad|çikolata|cikolata|шоколад|شوكولات|couverture|compound coating|kuvert[uü]r|praline|pralin",
+    "ingredients": r"ingredient|zutaten|rohstoff|ingredienti|ingr[eé]dient|ingrediente|ingredi[eë]nt|sk[lł]adnik|hammadde|مكونات|ингредиент|backzutaten",
+}
+CAT_RE = {k: re.compile(v, re.I) for k, v in CATEGORIES.items()}
+USER_CATS = ("biscuit", "wafer", "cake", "bakery", "ice_cream", "dairy", "beverage", "cereal_snack", "spread", "confectionery", "chocolate")
+B2B_RE = re.compile(r"b2b|wholesale|gro(?:ß|ss)handel|grossist|all'ingrosso|grossiste|mayorista|groothandel|hurtown|toptan|بالجملة|private label|eigenmarke|marque de distributeur|"
+                    r"co-?pack|\boem\b|industrial customers|industriekunden|food industry|lebensmittelindustrie|industrie alimentaire|industria alimentare|g[ıi]da sanayi|"
+                    r"\bbulk\b|25 ?kg|big bags?|pallets?|supplier to|lieferant f[uü]r|zulieferer|food ?service|gastronomie|horeca|we export|exportieren|exporting to", re.I)
+PROCESSOR_RE = re.compile(r"(?:hersteller|produzent|producer|manufacturer|producteur|produttore|fabricant)\s+(?:von|of|de|di|van)?\s*(?:kakao|cocoa|cacao)\w*|"
+                          r"cocoa (?:bean )?(?:processing|processor|grinding|grinder)|cocoa liquor producer|kakaoverarbeitung|cacao transformation|bean[- ]to[- ]bar|"
+                          r"cocoa processor|origin cocoa|cocoa beans? (?:sourcing|trading|supply)|kakao i[sş]leme|cocoa mass producer|cocoa butter producer", re.I)
+CRAFT_RE = re.compile(r"handmade|handgemacht|hand-?crafted|artisan|craft chocolate|manufaktur|bean[- ]to[- ]bar|chocolatier|confiseur|artigianale|ambachtelijk|family[- ]run|familienbetrieb|boutique", re.I)
+RETAIL_RE = re.compile(RETAIL.pattern + r"|ladengesch[aä]ft|store locator|our shops|filialen|geschenk ?box|shop now|order online|gift box|pralinenmanufaktur", re.I)
+
+
+def analyze(text):
+    """Site metninden: kakao ilgisi, firma tipi, ürün kategorileri, B2B/üretici/perakende/rakip sinyalleri."""
     low = text.lower()
-    score = sum(min(10, len(re.findall(p, low))) * w for p, w in COCOA_TERMS)
-    m, w, r = len(MANUF.findall(text)), len(WHOLE.findall(text)), len(RETAIL.findall(text))
+    cocoa = min(100, int(sum(min(10, len(re.findall(p, low))) * w for p, w in COCOA_TERMS) * 3))
+    cats = {k: len(r.findall(text)) for k, r in CAT_RE.items()}
+    cats = {k: v for k, v in cats.items() if v}
+    m, w, r = len(MANUF.findall(text)), len(WHOLE.findall(text)), len(RETAIL_RE.findall(text))
+    b2b, proc, craft = len(B2B_RE.findall(text)), len(PROCESSOR_RE.findall(text)), len(CRAFT_RE.findall(text))
     if m >= 2 and 2 * m >= r:
         btype = "manufacturer"
     elif w >= 2 and 2 * w >= r:
@@ -507,7 +538,28 @@ def signals(text):
         btype = "manufacturer" if m >= w else "wholesale"
     else:
         btype = "unknown"
-    return min(100, int(score * 3)), btype
+    user_hits = sum(cats.get(k, 0) for k in USER_CATS if k not in ("chocolate", "confectionery"))
+    end_cats = [k for k in USER_CATS if cats.get(k, 0) >= 2]
+    if proc >= 2 and user_hits < 3:
+        buyer = "competitor"          # kakao işleyici: alıcı değil rakip
+    elif btype == "retail" and m < 3:
+        buyer = "retail"              # son tüketiciye satan dükkân/webshop
+    elif craft >= 2 and r >= 1 and m < 3:
+        buyer = "craft"
+    elif btype == "wholesale" or (cats.get("ingredients", 0) >= 3 and w >= 1):
+        buyer = "distributor"
+    elif btype == "manufacturer" and end_cats:
+        buyer = "craft" if (craft >= 3 and len(end_cats) <= 2 and set(end_cats) <= {"chocolate", "confectionery"} and b2b == 0) else "industrial"
+    elif end_cats and b2b >= 2:
+        buyer = "industrial"
+    else:
+        buyer = "unknown"
+    return {"cocoa": cocoa, "btype": btype, "cats": cats, "b2b": b2b, "processor": proc, "craft": craft, "retail": r, "manuf": m, "whole": w, "buyer": buyer}
+
+
+def signals(text):  # geriye uyumluluk
+    a = analyze(text)
+    return a["cocoa"], a["btype"]
 
 
 # ----------------------------------------------------------------------------- sayfa seçimi
@@ -680,7 +732,9 @@ def crawl_site(website, max_pages=8, delay=1.0, cancel=None, timeout=12, fetcher
         res["description"] = res["description"] or pg["description"]
         res["lang"] = res["lang"] or pg["lang"]
         res["title"] = res["title"] or pg["title"]
-    res["cocoa_signal"], res["business_type"] = signals("\n".join(alltext))
+        res["ld_name"] = res.get("ld_name") or pg["ld_name"]
+    res["analysis"] = analyze("\n".join(alltext))
+    res["cocoa_signal"], res["business_type"] = res["analysis"]["cocoa"], res["analysis"]["btype"]
     return res
 
 

@@ -12,13 +12,13 @@ def cfhex(email, key=0x2A):
 
 
 HOME = """<html lang="de"><head><title>Köln Kakao GmbH – Kakaoverarbeitung</title>
-<meta name="description" content="Hersteller von Kakaopulver und Kakaobutter seit 1987.">
+<meta name="description" content="Hersteller von Keksen und Waffeln seit 1987.">
 <script type="application/ld+json">{"@context":"https://schema.org","@type":"Organization","name":"Köln Kakao GmbH","telephone":"+49 221 123456",
 "email":"info@koeln-kakao.de","address":{"@type":"PostalAddress","streetAddress":"Kakaostraße 12","postalCode":"50667","addressLocality":"Köln","addressCountry":"DE"},
 "sameAs":["https://www.linkedin.com/company/koeln-kakao","https://www.facebook.com/koelnkakao"],"numberOfEmployees":{"@type":"QuantitativeValue","value":120},"foundingDate":"1987"}</script>
 </head><body><nav><a href="/impressum">Impressum</a> <a href="/kontakt">Kontakt</a> <a href="/team">Unser Team</a> <a href="/produkte/kakaopulver">Produkte</a>
 <a href="/karriere">Karriere</a> <a href="/datenschutz">Datenschutz</a> <a href="https://agentur.example/">Webdesign</a></nav>
-<h1>Wir sind Hersteller von Kakaopulver</h1><p>Unsere Produktion in Köln liefert Kakao und Schokolade an die Industrie. Kakao, Kakao, Schokolade.</p>
+<h1>Wir sind Hersteller von Keksen und Waffeln</h1><p>Unsere Produktion in Köln liefert Kekse, Waffeln und Kuchen mit Kakao und Schokolade an den Handel (Eigenmarke). Kakao, Kakao, Schokolade.</p>
 <a href="https://www.instagram.com/koelnkakao/">IG</a><a href="https://www.facebook.com/sharer/sharer.php?u=x">share</a></body></html>"""
 IMPRESSUM = f"""<html lang="de"><body><h1>Impressum</h1><p>Köln Kakao GmbH<br>Kakaostraße 12<br>50667 Köln</p>
 <p>Geschäftsführer: Hans Müller, Anna Schmidt</p>
@@ -82,6 +82,8 @@ class T(unittest.TestCase):
         self.assertEqual(r["lang"], "de")
         self.assertGreater(r["cocoa_signal"], 50)
         self.assertEqual(r["business_type"], "manufacturer")
+        self.assertEqual(r["analysis"]["buyer"], "industrial")
+        self.assertIn("biscuit", r["analysis"]["cats"])
         self.assertIn("Hersteller", r["description"])
         self.assertNotIn("https://koeln-kakao.de/karriere", r["pages"])
         self.assertNotIn("https://koeln-kakao.de/datenschutz", r["pages"])
@@ -101,6 +103,13 @@ class T(unittest.TestCase):
         r = crawler.crawl_site(base, delay=0, fetcher=f)
         self.assertFalse(r["ok"])
         self.assertIn("robots", " ".join(r["errors"]))
+
+    def test_buyer_types(self):
+        a = crawler.analyze
+        self.assertEqual(a("Wir sind Hersteller von Kakaopulver und Kakaobutter. Kakaoverarbeitung. Bean to bar.")["buyer"], "competitor")
+        self.assertEqual(a("Online Shop. In den Warenkorb. Warenkorb Checkout. Pralinen Schokolade Geschenkbox. Öffnungszeiten.")["buyer"], "retail")
+        self.assertEqual(a("Wholesale distributor of bakery ingredients. Ingredients, ingredients, ingredients. B2B bulk 25 kg pallets. Importer.")["buyer"], "distributor")
+        self.assertEqual(a("Ice cream manufacturer. Gelato, frozen dessert, ice cream. Our factory produces for foodservice. We produce.")["buyer"], "industrial")
 
     def test_guess_emails(self):
         g = crawler.guess_emails([{"name": "Anna Schmidt", "role": "GF"}, {"name": "Jörg Müller", "role": ""}], "firma.de", ["maria.rossi@firma.de"])

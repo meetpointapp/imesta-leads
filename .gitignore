@@ -2,3 +2,4 @@ leads.db
 leads.db-journal
 out/
 __pycache__/
+secrets.json

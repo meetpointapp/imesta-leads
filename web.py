@@ -11,6 +11,7 @@ import contextlib
 import datetime as dt
 import hmac
 import html
+import json
 import os
 import sqlite3
 import tempfile
@@ -19,6 +20,7 @@ import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import leads
+import secrets_util
 from leads import STATUSES, SEGMENTS, COUNTRIES
 
 esc = html.escape
@@ -27,7 +29,7 @@ STATUS_TR = {"new": "Yeni", "contacted": "İletişimde", "replied": "Yanıt verd
 STATUS_COLOR = {"new": "#9a8470", "contacted": "#3b82c4", "replied": "#8b5cf6", "sample": "#d98324",
                 "negotiation": "#b8863b", "won": "#2e7d32", "lost": "#b04a3a", "nurture": "#6b7f8c"}
 OPEN_STATUSES = ("contacted", "replied", "sample", "negotiation")
-SEGMENT_TR = {"chocolate_maker": "Çikolata üreticisi", "confectionery": "Şekerleme / bisküvi", "distributor": "Distribütör",
+SEGMENT_TR = {"biscuit_bakery": "Bisküvi / kek / fırın sanayi", "cereal_snack": "Tahıl / atıştırmalık / ezme", "chocolate_maker": "Çikolata üreticisi", "confectionery": "Şekerleme / bisküvi", "distributor": "Distribütör",
               "bakery_ingredient": "Pastane / fırın malzemesi", "ice_cream": "Dondurma", "dairy_beverage": "Süt / içecek",
               "retail_craft": "Butik / perakende", "other": "Diğer"}
 KIND_TR = {"email": "E-posta", "call": "Arama", "sample": "Numune", "meeting": "Görüşme", "note": "Not"}
@@ -39,6 +41,7 @@ PRODUCTS = [("1805", "Kakao tozu"), ("1804", "Kakao yağı (butter)"), ("1803", 
             ("1801", "Kakao çekirdeği"), ("1806", "Çikolata ve kakaolu ürünler")]
 DEFAULT_FIND = ["DE", "NL", "BE", "FR", "GB", "PL", "IT", "AE"]
 ISO3_TO_ISO2 = {v[1]: k for k, v in COUNTRIES.items()}
+BUYER_TR = leads.BUYER_TR
 PAGE_SIZE = 50
 SORTS = {  # url anahtarı: (sql ifadesi, boş değerler sona mı)
     "score": ("score", False), "name": ("name COLLATE NOCASE", False), "country": ("country", True),
@@ -69,6 +72,8 @@ ICONS = {
     "star": '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>',
     "reply": '<polyline points="9 17 4 12 9 7"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/>',
     "box": '<path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/>',
+    "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
+    "sliders": '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
     "x": '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
 }
 
@@ -201,6 +206,14 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;margin:6px 0}
 .tag{display:inline-block;font-size:11.5px;font-weight:600;padding:0 7px;border-radius:5px;background:var(--soft);color:var(--cocoa);margin-left:4px}.tag.warn{background:#fff1cf;color:#8a5f14}
 .soc a{margin-right:10px;white-space:nowrap}.meter{height:6px;border-radius:99px;background:var(--soft);overflow:hidden;margin-top:4px}.meter i{display:block;height:100%;background:var(--accent)}
 .cover{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:18px}.cover b{font:600 20px Georgia,serif;color:var(--brand)}.cover span{display:block;font-size:12.5px;color:var(--muted)}
+.opps{display:grid;grid-template-columns:repeat(auto-fill,minmax(430px,1fr));gap:14px;margin-bottom:6px}@media(max-width:520px){.opps{grid-template-columns:1fr}}
+.opp{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:9px}
+.opp:hover{border-color:#d9ccb7}.opp .top{display:flex;gap:12px;align-items:flex-start}.opp .big{min-width:48px;height:48px;border-radius:12px;display:grid;place-items:center;font:700 19px Georgia,serif;background:#efe8dc;color:#6f5f50}
+.opp .big.hi{background:#e1f1e2;color:var(--ok)}.opp .big.mid{background:#f8ecd3;color:#8a5f14}.opp h3{margin:0;font-size:16px}.opp h3 a{color:var(--brand);text-decoration:none}.opp h3 a:hover{text-decoration:underline}
+.opp .sub{color:var(--muted);font-size:13px}.opp .sum{font-size:13.5px}.chips2{display:flex;gap:5px;flex-wrap:wrap}.chips2 span{font-size:12px;background:var(--soft);color:#6f5848;border-radius:6px;padding:1px 8px}
+.opp .offer{font-size:13px;background:#fff8e8;border:1px solid #f0dca4;border-radius:8px;padding:6px 10px}.opp .ct{font-size:13.5px;border-top:1px dashed var(--line);padding-top:8px}
+.opp .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:auto}.cc{margin:22px 0 10px;display:flex;align-items:baseline;gap:10px}.cc h2{margin:0}
+.opp details{font-size:13px;color:#6f5f50}.opp details summary{margin:0;font-weight:500}
 .row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 """
 
@@ -235,8 +248,8 @@ def layout(title, body, active="", flash="", due=0):
     cfg = leads.config()
     logo = cfg.get("theme", {}).get("logo_url")
     mark = f'<img src="{esc(logo)}" alt="">' if logo else icon("zap", 20)
-    nav = [("/", "Bugün", "today"), ("/pipeline", "Satış hattı", "board"), ("/leads", "Firmalar", "users"),
-           ("/markets", "Pazarlar", "globe"), ("/tools", "Firma bul", "search")]
+    nav = [("/", "Bugün", "today"), ("/firsatlar", "Fırsatlar", "target"), ("/pipeline", "Satış hattı", "board"), ("/leads", "Firmalar", "users"),
+           ("/markets", "Pazarlar", "globe"), ("/tools", "Keşfet", "search"), ("/settings", "Ayarlar", "sliders")]
     links = "".join(
         f'<a href="{u}" class="{"on" if u == active else ""}">{icon(i)}{n}'
         f'{f"<span class=cnt>{due}</span>" if u == "/" and due else ""}</a>' for u, n, i in nav)
@@ -323,8 +336,8 @@ def page_today(con, q):
     sent = n("SELECT COUNT(*) FROM activities WHERE kind='email'")
     h = head("Bugün", dt.date.today().strftime("%d.%m.%Y") + " — kimseyi kaçırma: önce gecikenler, sonra bugünküler.",
              f'<a class="btn ghost" href="/add">{icon("plus")} Firma ekle</a><a class="btn" href="/tools">{icon("search")} Firma bul</a>')
-    steps = [(has_market, "/tools", "Pazar verisini çek"), (total > 0, "/tools", "Firma bul"),
-             (emails > 0, "/leads?with_email=1", "E-postalı firmaları incele"), (sent > 0, "/", "İlk maili gönder")]
+    n_opps = len(leads.opportunity_rows(con, None, 55))
+    steps = [(total > 0, "/tools", "Otopilotu çalıştır"), (n_opps > 0, "/firsatlar", "Fırsatlara bak"), (sent > 0, "/firsatlar?ready=1", "İlk maili gönder")]
     if not all(s[0] for s in steps):
         h += '<div class="banner"><b>Başlangıç</b>' + "".join(
             f'<a class="st {"done" if d else ""}" href="{u}"><b>{icon("check", 11) if d else i}</b>{t}</a>' for i, (d, u, t) in enumerate(steps, 1)) + "</div>"
@@ -400,7 +413,7 @@ def page_leads(con, q):
     if g("q"):
         w.append("(name LIKE ? OR domain LIKE ? OR city LIKE ? OR notes LIKE ?)")
         p += [f"%{g('q')}%"] * 4
-    for col in ("status", "country", "segment"):
+    for col in ("status", "country", "segment", "buyer_type"):
         if g(col):
             w.append(f"{col}=?")
             p.append(g(col).upper() if col == "country" else g(col))
@@ -432,11 +445,12 @@ def page_leads(con, q):
     ctry.sort(key=lambda c: tr_key(cname(c)))
     actions = (f'<a class="btn ghost" href="/import">{icon("upload")} Liste yükle</a><a class="btn ghost" href="/export.csv">{icon("download")} Firmalar</a><a class="btn ghost" href="/contacts.csv" title="Her satır bir kişi/e-posta: toplu posta için">{icon("download")} Kişiler</a>'
                f'<a class="btn" href="/add">{icon("plus")} Firma ekle</a>')
-    h = head("Firmalar", f"{total} firma" + (" (filtreli)" if any(g(k) for k in ("q", "status", "country", "segment", "min_score", "with_email", "with_phone", "with_person", "with_buyer", "starred")) else ""), actions)
+    h = head("Firmalar", f"{total} firma" + (" (filtreli)" if any(g(k) for k in ("q", "status", "country", "segment", "buyer_type", "min_score", "with_email", "with_phone", "with_person", "with_buyer", "starred")) else ""), actions)
     h += f"""<form class="inline card" method="get" style="margin-bottom:14px"><div><label>Ara</label><input name="q" value="{esc(g('q'))}" placeholder="firma, site, şehir, not" style="width:200px"></div>
 <div><label>Durum</label><select name="status">{opts([(s, STATUS_TR[s]) for s in STATUSES], g('status'), 'Hepsi')}</select></div>
 <div><label>Segment</label><select name="segment">{opts(list(SEGMENT_TR.items()), g('segment'), 'Hepsi')}</select></div>
 <div><label>Ülke</label><select name="country">{opts([(c, cname(c)) for c in ctry], g('country').upper(), 'Hepsi')}</select></div>
+<div><label>Alıcı tipi</label><select name="buyer_type">{opts(list(BUYER_TR.items()), g('buyer_type'), 'Hepsi')}</select></div>
 <div><label>Min. puan</label><input name="min_score" value="{esc(g('min_score'))}" style="width:64px"></div>
 <div><label class="chip" style="margin:0"><input type="checkbox" name="with_email" value="1"{" checked" if g('with_email') else ""}> ✉ e-postalı</label></div>
 <div><label class="chip" style="margin:0"><input type="checkbox" name="with_phone" value="1"{" checked" if g('with_phone') else ""}> ☎ telefonlu</label></div>
@@ -464,9 +478,9 @@ def page_leads(con, q):
         late = nf and nf < td and r["status"] not in ("won", "lost")
         h += (f'<tr><td><input type="checkbox" class="rowchk" name="ids" value="{r["id"]}" onchange="updBulk()"></td><td>{star_btn(r["id"], r["starred"])}</td>'
               f'<td>{score_badge(r["score"])}</td><td><a class="name" href="/lead/{r["id"]}">{esc(r["name"])}</a>'
-              f'<small>{esc(leads.get_domain(r["website"]) if r["website"] else "web sitesi yok")}'
+              f'<small>{esc(r["name_gloss"]) + " · " if r["name_gloss"] else ""}{esc(leads.get_domain(r["website"]) if r["website"] else "web sitesi yok")}'
               f'{" · ✉" if r["has_email"] else ""}{" · ☎" if r["phone"] else ""}{" · 👤" if r["has_person"] else ""}</small></td>'
-              f'<td>{esc(cname(r["country"]))}</td><td>{SEGMENT_TR.get(r["segment"], r["segment"])}</td><td>{pill(r["status"])}</td>'
+              f'<td>{esc(cname(r["country"]))}</td><td>{SEGMENT_TR.get(r["segment"], r["segment"])}<small>{esc(BUYER_TR.get(r["buyer_type"] or "", ""))}</small></td><td>{pill(r["status"])}</td>'
               f'<td title="Veri doluluğu: iletişim bilgisi ne kadar tamam"><div class="meter" style="width:54px"><i style="width:{r["data_score"] or 0}%"></i></div><small>%{r["data_score"] or 0}</small></td>'
               f'<td>{esc(ago(r["last_contacted"])) if r["last_contacted"] else "—"}</td>'
               f'<td class="{"late" if late else ""}">{esc(nf) if nf else "—"}</td><td>{money(r["value_usd"])}</td></tr>')
@@ -508,12 +522,26 @@ def next_step(con, c):
 def profile_card(con, c):
     """Taramadan toplanan firma bilgileri."""
     rows = []
-    if c["business_type"] or c["cocoa_signal"] is not None:
-        sig = c["cocoa_signal"] or 0
-        rows.append(("Tip", f'{BTYPE_TR.get(c["business_type"] or "unknown", "Belirsiz")} <span class="tag" title="Sitede kakao/çikolata ile ilgili ifadelerin yoğunluğu">'
-                            f'kakao ilgisi {sig}/100</span>'))
-    if c["description"]:
-        rows.append(("Hakkında", esc(c["description"])))
+    bt = c["buyer_type"] or ""
+    if bt:
+        cls = {"industrial": "background:#e1f1e2;color:var(--ok)", "distributor": "background:#e1f1e2;color:var(--ok)", "competitor": "background:#f7e1dd;color:var(--bad)",
+               "retail": "background:#f7e1dd;color:var(--bad)", "craft": "background:#fff1cf;color:#8a5f14"}.get(bt, "")
+        rows.append(("Alıcı mı?", f'<span class="tag" style="{cls}margin-left:0">{esc(BUYER_TR.get(bt, bt))}</span> <span class="tag" title="Sitede kakao/çikolata ifadelerinin yoğunluğu">kakao ilgisi {c["cocoa_signal"] or 0}/100</span>'))
+    try:
+        reasons = json.loads(c["fit_reasons"] or "[]")
+    except ValueError:
+        reasons = []
+    if reasons:
+        rows.append(("Neden potansiyel?", '<div class="chips2">' + "".join(f"<span>{esc(x)}</span>" for x in reasons) + "</div>"))
+    if c["summary_tr"]:
+        rows.append(("Özet", esc(c["summary_tr"])))
+    if c["offer"]:
+        rows.append(("Ne teklif edilir?", esc(c["offer"])))
+    gloss = c["name_gloss"] or (c["name_latin"] if c["name_latin"] and c["name_latin"] != c["name"] else "")
+    if gloss:
+        rows.append(("Firma adı (Türkçe)", esc(gloss)))
+    if c["description"] or c["desc_tr"]:
+        rows.append(("Firma kendini şöyle anlatıyor", esc(c["desc_tr"] or c["description"]) + (f'<br><small class="muted">Orijinal: {esc(c["description"])}</small>' if c["desc_tr"] and c["description"] else "")))
     if c["address"] or c["lat"]:
         q = f'{c["lat"]},{c["lon"]}' if c["lat"] and c["lon"] else urllib.parse.quote(f'{c["address"] or ""} {c["name"]}')
         rows.append(("Adres", f'{esc(c["address"] or "")} <a href="https://www.google.com/maps/search/?api=1&query={q}" target=_blank rel=noopener>haritada aç ↗</a>'))
@@ -551,7 +579,9 @@ def page_lead(con, cid, q):
     lang = (q.get("lang") or ["de" if (c["country"] or "") in DE_COUNTRIES and "de" in langs else "en"])[0]
     tpl = (q.get("tpl") or [sugg_tpl or "cold"])[0]
     back = f"/lead/{cid}"
-    sub = f'{esc(c["city"] or "")} {esc(cname(c["country"]))} · {SEGMENT_TR.get(c["segment"], "")} · kaynak: {esc(c["source"] or "-")}'
+    gl = c["name_gloss"] or (c["name_latin"] if c["name_latin"] and c["name_latin"] != c["name"] else "")
+    sub = (f'{esc(gl) + " · " if gl else ""}{esc(c["city"] or "")} {esc(cname(c["country"]))} · {SEGMENT_TR.get(c["segment"], "")} · '
+           f'{esc(BUYER_TR.get(c["buyer_type"] or "", "")) + " · " if c["buyer_type"] else ""}kaynak: {esc(c["source"] or "-")}')
     if c["website"]:
         sub += f' · <a href="{esc(c["website"])}" target=_blank rel=noopener>{esc(leads.get_domain(c["website"]))}</a>'
     status_form = (f'<form class="pl" method="post" action="/lead/{cid}/status"><input type="hidden" name="reason" value="">'
@@ -655,6 +685,102 @@ Aynı firma ikinci kez eklenmez; daha önce sildiklerin de geri gelmez.</p>
 <label>veya buraya yapıştır</label><textarea id="csv" name="csv" rows="12" required></textarea><br><br><button>{icon('upload')} İçe aktar</button></form>""", "/leads"
 
 
+def opp_card(r):
+    cid = r["id"]
+    ct = r["contact"]
+    gloss = r["name_gloss"] or (r["name_latin"] if r["name_latin"] and r["name_latin"] != r["name"] else "")
+    chips = "".join(f"<span>{esc(x)}</span>" for x in r["reasons"][:6])
+    parts = []
+    if ct["person"]:
+        parts.append(f'<b>{esc(ct["person"])}</b> <span class="muted">{esc(ct["role"] or DEPT_TR.get(ct["dept"] or "", ""))}</span>')
+    if ct["email"]:
+        g = '<span class="tag warn" title="Sitedeki e-posta kalıbından tahmin edildi; göndermeden önce doğrulayın">tahmin</span>' if ct["email_guess"] else ""
+        d = f'<span class="tag">{DEPT_TR.get(ct["email_dept"] or "", "")}</span>' if ct["email_dept"] and not ct["email_guess"] else ""
+        parts.append(f'✉ <a href="mailto:{esc(ct["email"])}">{esc(ct["email"])}</a>{d}{g}')
+    ph = r["phone"] or ct["phone"]
+    if ph:
+        parts.append(f'☎ <a href="tel:{esc(ph)}">{esc(ph)}</a>')
+    contact = " &nbsp;·&nbsp; ".join(parts) if parts else '<span class="muted">İletişim bilgisi bulunamadı — firma sayfasında "Siteyi tara" ile deneyin</span>'
+    desc = ""
+    if r["description"] or r["desc_tr"]:
+        orig = f'<p class="muted" style="margin:4px 0 0">Orijinal: {esc(r["description"])}</p>' if r["desc_tr"] and r["description"] else ""
+        desc = f'<details><summary>Firma kendini nasıl anlatıyor?</summary><p style="margin:6px 0 0">{esc(r["desc_tr"] or r["description"])}</p>{orig}</details>'
+    offer = f'<div class="offer">{esc(r["offer"])}</div>' if r["offer"] else ""
+    cls = "hi" if r["score"] >= 70 else "mid" if r["score"] >= 50 else ""
+    site = f' · <a href="{esc(r["website"])}" target=_blank rel=noopener>{esc(leads.get_domain(r["website"]))} ↗</a>' if r["website"] else ""
+    gl = f"{esc(gloss)} · " if gloss else ""
+    acts = (f'<a class="btn sm" href="/lead/{cid}">{icon("mail", 14)} Taslağı aç</a>'
+            + quick_form(cid, "sent", "Gönderdim", "check", "/firsatlar", "ghost sm", "E-posta gönderildi olarak kaydet")
+            + quick_form(cid, "skip", "Uygun değil", "x", "/firsatlar", "ghost sm", "Listeden çıkar"))
+    return (f'<div class="opp"><div class="top"><div class="big {cls}" title="Alıcı uygunluğu (0-100)">{r["score"]}</div><div style="flex:1;min-width:0">'
+            f'<h3><a href="/lead/{cid}">{esc(r["name"])}</a></h3><div class="sub">{gl}{esc(cname(r["country"]))}{site}</div></div>{star_btn(cid, r["starred"])}</div>'
+            f'<div class="sum">{esc(r["summary_tr"] or "")}</div><div class="chips2">{chips}</div>{offer}{desc}'
+            f'<div class="ct">{contact}</div><div class="acts">{acts}</div></div>')
+
+
+def page_opps(con, q):
+    g = lambda k: (q.get(k) or [""])[0].strip()  # noqa: E731
+    min_score = int(g("min")) if g("min").isdigit() else 55
+    btype, cc, ready = g("type"), g("country").upper(), bool(g("ready"))
+    base = leads.opportunity_rows(con, None, min_score, btype or None, ready)
+    by_cc = {}
+    for r in base:
+        by_cc.setdefault(r["country"] or "", []).append(r)
+    rows = by_cc.get(cc, []) if cc else base
+    pending = con.execute("SELECT COUNT(*) FROM companies WHERE website IS NOT NULL AND website<>'' AND IFNULL(enrich_v,0)<2 AND status NOT IN ('lost','won')").fetchone()[0]
+    n_ready = sum(1 for r in rows if r["contact"]["email"])
+    n_person = sum(1 for r in rows if r["contact"]["person"])
+    actions = (f'<a class="btn" href="/firsatlar.xlsx?min={min_score}">{icon("download")} Excel indir</a>'
+               f'<a class="btn ghost" href="/firsatlar.csv?min={min_score}">CSV</a>')
+    h = head("Fırsatlar", "Kakao tozu/yağı satın alması en muhtemel firmalar: neden potansiyel olduğu, kime yazılacağı ve ne teklif edileceğiyle birlikte.", actions)
+    ctry = sorted(by_cc, key=lambda c: -len(by_cc[c]))
+    h += f"""<form class="inline card" method="get" style="margin-bottom:14px"><div><label>Ülke</label><select name="country">{opts([(c, f"{cname(c)} ({len(by_cc[c])})") for c in ctry if c], cc, 'Hepsi')}</select></div>
+<div><label>Alıcı tipi</label><select name="type">{opts([("industrial", "Kakao kullanan üretici"), ("distributor", "Toptancı / distribütör")], btype, 'Hepsi')}</select></div>
+<div><label>Min. uygunluk</label><select name="min">{opts([(str(x), f"{x}+") for x in (40, 50, 55, 60, 70, 80)], str(min_score))}</select></div>
+<div><label class="chip" style="margin:0"><input type="checkbox" name="ready" value="1"{" checked" if ready else ""}> ✉ e-postası hazır</label></div><button>{icon('search')} Göster</button></form>"""
+    h += ('<div class="stats">' + "".join(f'<div class="stat"><b>{v}</b><span>{k}</span></div>' for k, v in [
+        ("Fırsat", len(rows)), ("E-postası hazır", n_ready), ("Kişi adı bulunan", n_person), ("Ülke", len({r["country"] for r in rows})),
+        ("Taranmayı bekleyen firma", pending)]) + "</div>")
+    if not rows:
+        msg = ("Henüz fırsat yok. <b>Keşfet</b> sayfasından <b>Otopilot</b>'u çalıştırın: hazır alıcı listesini yükler, siteleri tarar, puanlar ve burada sıralar."
+               if not pending else f"Filtreye uyan fırsat yok. {pending} firmanın sitesi henüz taranmadı: <a href='/tools'>Keşfet</a> sayfasında derin taramayı çalıştırın ya da minimum uygunluğu düşürün.")
+        return "Fırsatlar", h + f'<div class="card empty">{msg}</div>', "/firsatlar"
+    groups = {c: by_cc[c] for c in ctry} if not cc else {cc: rows}
+    for c, rs in groups.items():
+        shown = rs if cc else rs[:8]
+        h += f'<div class="cc"><h2>{esc(cname(c))}</h2><span class="count">{len(rs)}</span></div><div class="opps">' + "".join(opp_card(r) for r in shown) + "</div>"
+        if len(rs) > len(shown):
+            h += f'<p><a href="/firsatlar{build_qs(q, country=c)}">{cname(c)} için {len(rs) - len(shown)} fırsat daha →</a></p>'
+    return "Fırsatlar", h, "/firsatlar"
+
+
+def page_settings(con, q):
+    def row(key, label, hint, secret=True):
+        v = secrets_util.get(key)
+        env = bool(os.environ.get(key.upper()))
+        state = (f'<span class="tag" style="background:#e1f1e2;color:var(--ok)">tanımlı ✔ {esc(secrets_util.mask(v)) if secret else esc(v)}{" (ortam değişkeni)" if env else ""}</span>'
+                 if v else '<span class="tag">tanımlı değil</span>')
+        clr = (f'<form class="pl" method="post" action="/settings"><input type="hidden" name="clear" value="{key}"><button class="danger sm">Sil</button></form>' if v and not env else "")
+        return (f'<div style="margin-bottom:12px"><label>{label} {state} {clr}</label>'
+                f'<form class="inline" method="post" action="/settings"><input name="{key}" type="{"password" if secret else "text"}" placeholder="yeni değer yapıştırın" style="width:360px" autocomplete="off">'
+                f'<button class="ghost sm">Kaydet</button></form><small class="muted">{hint}</small></div>')
+    prov = leads.discover.provider()
+    h = head("Ayarlar", "İsteğe bağlı ücretsiz servisler: ne kadar çok tanımlarsan sistem o kadar çok firma bulur ve o kadar iyi çevirir. Anahtarlar bu bilgisayarda <code>secrets.json</code> dosyasında saklanır.")
+    h += f'<div class="card" style="margin-bottom:16px"><h3>1 · Arama motoru (Google\'a yazmanın otomatiği) {"✔ " + prov if prov else ""}</h3>'
+    h += ('<p class="muted" style="margin-top:0">Ülke × sektör × yerel dilde yüzlerce arama yapar ("Keks Hersteller Deutschland", "fabricant biscuits France"...) ve çıkan firma sitelerini aday olarak alır. '
+          'Arama sonuç sayfalarını kazımaz; resmî API kullanır. <b>Birini</b> tanımlamanız yeterli.</p>')
+    h += row("brave_api_key", "Brave Search API anahtarı (ayda ~2000 ücretsiz sorgu)", 'Alma: <a href="https://api.search.brave.com/" target=_blank rel=noopener>api.search.brave.com</a> → kayıt ol → ücretsiz plan → API key oluştur. (Kayıt sırasında kart bilgisi istenebilir; güncel plan ve limitleri sitede kontrol edin.)')
+    h += row("google_api_key", "Google API anahtarı (günde 100 ücretsiz sorgu)", 'Google Cloud Console → "Custom Search API"yi etkinleştir → Kimlik bilgileri → API anahtarı.')
+    h += row("google_cx", "Google arama motoru kimliği (cx)", '<a href="https://programmablesearchengine.google.com/" target=_blank rel=noopener>programmablesearchengine.google.com</a> → yeni arama motoru → "Tüm web\'de ara" → Arama motoru kimliği.', secret=False)
+    h += '</div><div class="card"><h3>2 · Çeviri (açıklamalar Türkçeye)</h3>'
+    h += ('<p class="muted" style="margin-top:0">Hiçbiri tanımlı değilse ücretsiz MyMemory kullanılır (günlük sınırlı). Firma adları ve özetler anahtarsız da çevrilir (sektör sözlüğüyle).</p>')
+    h += row("anthropic_api_key", "Claude API anahtarı (isteğe bağlı, çok daha kaliteli çeviri; kullanım başına çok düşük ücretli)", '<a href="https://console.anthropic.com/" target=_blank rel=noopener>console.anthropic.com</a> → API Keys. Ücretsiz kalmak istiyorsanız boş bırakın.')
+    h += row("libretranslate_url", "LibreTranslate adresi (isteğe bağlı)", 'Kendi sunucunuz ya da bir LibreTranslate servisi, örn. https://libretranslate.example.com', secret=False)
+    h += row("libretranslate_key", "LibreTranslate anahtarı (varsa)", "Servis anahtar istiyorsa.")
+    h += "</div>"
+    return "Ayarlar", h, "/settings"
+
+
 def fmt_money(v):
     return f"{v / 1e6:,.0f} M$".replace(",", ".")
 
@@ -729,17 +855,30 @@ def page_tools(con, q):
                     "".join(f'<div><b>%{100 * v // tot}</b><span>{k} <small>({v})</small></span><div class="meter"><i style="width:{100 * v // tot}%"></i></div></div>' for k, v in cov) +
                     "</div></div>")
     dis = "disabled" if JOB["running"] else ""
-    h = head("Firma bul", "Önce firmaları bul, sonra sitelerini tarayıp iletişim bilgilerini topla.") + status + cov_html
+    prov = leads.discover.provider()
+    disc_note = (f"✔ {prov} anahtarı tanımlı." if prov else 'Önce <a href="/settings">Ayarlar</a> sayfasından ücretsiz bir arama anahtarı ekleyin.')
+    h = head("Keşfet", "Alıcıları otomatik bul, tara ve sırala. Sonuç: Fırsatlar sayfası.") + status + cov_html
     h += f"""<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
-<form class="card tool" method="post" action="/job/find" style="grid-column:1/-1"><span class="no">1 · FİRMA BUL</span><h3>Haritadan otomatik firma bul + derin tarama</h3>
-<p class="muted" style="margin:0">Seçtiğin ülkelerdeki çikolatacı, şekerleme, dondurma ve gıda üreticilerini <b>harita verisinden</b> bulur, ardından sitelerine girip
-<b>e-posta, telefon, yönetici/satın alma kişileri, sosyal medya, adres ve vergi/sicil no</b> toplar, <b>puanlar</b>. Silinmiş firmalar tekrar eklenmez.
-Ülke başına ortalama 3–8 dakika sürer; ilk denemede 2–3 ülke seç.</p>
-{country_chips(DEFAULT_FIND[:3])}<div><button {dis}>{icon('zap')} Seçili ülkelerde bul ve tara</button></div></form>
-<form class="card tool" method="post" action="/job/wikidata"><span class="no">1 · FİRMA BUL (BÜYÜK FİRMALAR)</span><h3>Bilinen firmalar (Wikidata)</h3>
+<form class="card tool" method="post" action="/job/find" style="grid-column:1/-1;border-color:var(--accent)"><span class="no">OTOPİLOT · ÖNERİLEN</span><h3>Alıcıları bul, tara, puanla, çevir: tek tıkla</h3>
+<p class="muted" style="margin:0">Seçtiğin ülkeler için sırayla: <b>(1)</b> bilinen kakao kullanıcılarının hazır listesi, <b>(2)</b> arama motoru keşfi (yerel dillerde, anahtar varsa), <b>(3)</b> harita verisinden bisküvi/dondurma/süt sanayi ve toptancılar,
+<b>(4)</b> Wikidata'dan bilinen firmalar, <b>(5)</b> sitelerin derin taraması (iletişim, kişiler, firma tipi: <i>alıcı mı, rakip mi, dükkân mı?</i>), <b>(6)</b> puanlama, firma adı/özet çevirisi.
+Sonunda <a href="/firsatlar"><b>Fırsatlar</b></a> sayfasında ülke ülke sıralı, gerekçeli, iletişimi hazır liste çıkar. Ülke başına 5–15 dakika sürer; ilk denemede 2–3 ülke seç.</p>
+{country_chips(DEFAULT_FIND[:3])}<div><button {dis}>{icon('zap')} Otopilotu çalıştır</button></div></form>
+<div style="grid-column:1/-1"><h3 style="margin:8px 0 0">Tek tek adımlar</h3><p class="muted sm" style="margin:2px 0 0">Otopilot hepsini sırayla yapar; istersen tek bir adımı ayrı çalıştırabilirsin.</p></div>
+<form class="card tool" method="post" action="/job/discover"><span class="no">ARAMA MOTORU</span><h3>Google gibi ara, yeni firma bul</h3>
+<p class="muted" style="margin:0">Ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur. {disc_note}</p>
+<div class="actions"><div><label>Ülkeler (ISO)</label><input name="country" value="DE,NL,FR" style="width:150px"></div><div><label>En çok sorgu</label><input name="max_queries" value="40" style="width:70px"></div>
+<button class="ghost" {dis}>Ara</button></div></form>
+<form class="card tool" method="post" action="/job/translate"><span class="no">ÇEVİRİ</span><h3>Açıklamaları Türkçeye çevir</h3>
+<p class="muted" style="margin:0">En yüksek puanlı firmaların site açıklamaları Türkçeleşir (ücretsiz servis günlük sınırlıdır). Firma adları ve özetler zaten otomatik çevrilir.</p>
+<div class="actions"><div><label>Kaç firma</label><input name="limit" value="40" style="width:70px"></div><button class="ghost" {dis}>Çevir</button></div></form>
+<form class="card tool" method="post" action="/job/seed"><span class="no">HAZIR LİSTE</span><h3>Bilinen alıcıları yükle</h3>
+<p class="muted" style="margin:0">Bisküvi, gofret, dondurma, süt, tahıl ve çikolata sanayinin ve hammadde distribütörlerinin bilinen büyük firmaları (~150). Tekrar yüklemek zararsızdır.</p>
+<div><button class="ghost" {dis}>Hazır listeyi yükle</button></div></form>
+<form class="card tool" method="post" action="/job/wikidata"><span class="no">BÜYÜK FİRMALAR</span><h3>Bilinen firmalar (Wikidata)</h3>
 <p class="muted" style="margin:0">Açık veri tabanından çikolata, şekerleme, kakao, bisküvi ve fırın sektöründeki <b>bilinen şirketleri</b> web sitesi, çalışan sayısı, kuruluş yılı ve sosyal hesaplarıyla getirir. Büyük/orta alıcıları bulmak için iyi.</p>
 <div><label>Ülkeler (ISO, ops.)</label><input name="country" placeholder="DE,IT,TR — boş = hepsi" style="width:190px"> <button class="ghost" {dis}>Büyük firmaları çek</button></div></form>
-<form class="card tool" method="post" action="/job/enrich"><span class="no">2 · DERİN TARAMA</span><h3>Sitelerden iletişim bilgisi topla</h3>
+<form class="card tool" method="post" action="/job/enrich"><span class="no">DERİN TARAMA</span><h3>Sitelerden iletişim bilgisi topla</h3>
 <p class="muted" style="margin:0">Henüz taranmamış <b>{pending}</b> firmanın sitesinde iletişim, impressum, ekip ve hakkında sayfalarını gezer; e-posta (departman: satın alma, ihracat, satış…), telefon, WhatsApp,
 yönetici adları, sosyal medya, adres, vergi no ve kakao ilgisini kaydeder. robots.txt'e uyar.</p>
 <div class="actions"><div><label>Kaç firma</label><input name="limit" value="150" style="width:80px"></div>
@@ -755,7 +894,7 @@ yönetici adları, sosyal medya, adres, vergi no ve kakao ilgisini kaydeder. rob
 sayfalardan (iletişim, impressum, ekip) gelir. Siteler robots.txt'e uygun ve yavaş taranır; LinkedIn gibi giriş gerektiren ya da taramayı yasaklayan platformlardan veri çekilmez.
 Yönetici adları Almanya/Avusturya/İsviçre'de yasal zorunluluk olan Impressum sayfalarından gelir. <b>Tahmin</b> işaretli e-postalar sitedeki ad.soyad kalıbından türetilir; göndermeden önce doğrulayın.
 Büyük fabrikalar için fuar listelerini <a href="/import">Liste yükle</a> sayfasından ekleyebilirsin.</p></details>"""
-    return "Firma bul", h, "/tools"
+    return "Keşfet", h, "/tools"
 
 
 # ------------------------------------------------------------------ iş yürütme
@@ -787,23 +926,46 @@ def run_job(name, fn):
     return True
 
 
-def find_firms(countries):
-    """Harita verisinden firma bul → e-posta topla → puanla. Sonucu JOB['summary']'ye yazar."""
-    def stats():
+def autopilot(countries):
+    """Tek tıkla: hazır alıcı listesi → arama motoru → harita → Wikidata → derin tarama → puan + çeviri → fırsat listesi."""
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    cc = ",".join(countries)
+
+    def snap():
         c = leads.db()
         try:
-            return (c.execute("SELECT COUNT(*) FROM companies").fetchone()[0],
-                    c.execute("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE email_ok=1").fetchone()[0])
+            opps = leads.opportunity_rows(c, None, 55)
+            return (c.execute("SELECT COUNT(*) FROM companies").fetchone()[0], opps)
         finally:
             c.close()
-    b_firms, b_mail = stats()
-    leads.cmd_harvest_osm(argparse.Namespace(country=",".join(countries), segments=None))
-    if not leads.CANCEL.is_set():
-        print("\n--- Derin tarama: yeni firmaların siteleri (e-posta, telefon, kişi, sosyal medya) ---", flush=True)
-        leads.cmd_enrich(argparse.Namespace(limit=200, workers=8, pages=8, force=False))
-    leads.cmd_score(argparse.Namespace())
-    a_firms, a_mail = stats()
-    JOB["summary"] = f"{a_firms - b_firms} yeni firma bulundu, {a_mail - b_mail} firmaya e-posta eklendi; siteler tarandı ve hepsi puanlandı."
+    b_total, b_opps = snap()
+    c = leads.db()
+    has_seed = c.execute("SELECT COUNT(*) FROM companies WHERE source='seed'").fetchone()[0] > 0
+    c.close()
+    steps = [("1/6 Hazır alıcı listesi (bilinen kakao kullanıcıları)", lambda: leads.cmd_seed(argparse.Namespace()) if not has_seed else log("  zaten yüklü")),
+             ("2/6 Arama motoru keşfi (yerel dillerde)", lambda: leads.cmd_discover(argparse.Namespace(country=cc, segments="", max_queries=60)) if leads.discover.provider()
+              else log("  atlandı: arama anahtarı yok. Ayarlar sayfasından ücretsiz anahtar eklerseniz burada Google gibi arama yapıp yeni firmalar bulurum.")),
+             ("3/6 Harita verisi (bisküvi/dondurma/süt sanayi, toptancılar)", lambda: leads.cmd_harvest_osm(argparse.Namespace(country=cc, segments=None))),
+             ("4/6 Bilinen firmalar (Wikidata)", lambda: leads.cmd_harvest_wikidata(argparse.Namespace(country=cc))),
+             ("5/6 Derin tarama: siteler, iletişim, kişiler, firma tipi", lambda: leads.cmd_enrich(argparse.Namespace(limit=300, workers=8, pages=8, force=False, countries=list(countries)))),
+             ("6/6 Puanlama ve çeviri", lambda: (leads.cmd_score(argparse.Namespace()), leads.cmd_translate(argparse.Namespace(limit=40, min_score=50))))]
+    for title, fn in steps:
+        if leads.CANCEL.is_set():
+            log("Durduruldu.")
+            break
+        log(f"\n=== {title} ===")
+        try:
+            fn()
+        except Exception as e:  # bir adımın hatası diğerlerini engellemesin
+            log(f"  ! {e}")
+    a_total, a_opps = snap()
+    mine = [r for r in a_opps if (r["country"] or "") in countries]
+    ready = sum(1 for r in mine if r["contact"]["email"])
+    JOB["summary"] = (f"{a_total - b_total} yeni firma eklendi. Seçtiğin ülkelerde {len(mine)} alıcı fırsatı hazır (uygunluk 55+), "
+                      f"{ready} tanesinin e-postası var.")
+
+
+find_firms = autopilot  # eski ad
 
 
 # ------------------------------------------------------------------ sunucu
@@ -871,7 +1033,9 @@ class H(BaseHTTPRequestHandler):
                 p = leads.backup_db(force=True)
                 with open(p, "rb") as f:
                     return self._send(200, f.read(), "application/octet-stream", {"Content-Disposition": 'attachment; filename="imesta-leads-yedek.db"'})
-            routes = {"/": page_today, "/pipeline": page_pipeline, "/leads": page_leads, "/add": page_add, "/import": page_import,
+            if u.path in ("/firsatlar.xlsx", "/firsatlar.csv"):
+                return self._export_opps(q, u.path.endswith("xlsx"))
+            routes = {"/": page_today, "/firsatlar": page_opps, "/settings": page_settings, "/pipeline": page_pipeline, "/leads": page_leads, "/add": page_add, "/import": page_import,
                       "/markets": page_markets, "/tools": page_tools}
             if u.path in routes:
                 title, body, act = routes[u.path](con, q)
@@ -882,6 +1046,20 @@ class H(BaseHTTPRequestHandler):
             self._send(200, layout(title, body, act, flash, due_count(con)))
         finally:
             con.close()
+
+    def _export_opps(self, q, xl):
+        suffix = ".xlsx" if xl else ".csv"
+        with tempfile.NamedTemporaryFile("w+", suffix=suffix, delete=False) as t:
+            path = t.name
+        try:
+            m = (q.get("min") or ["50"])[0]
+            leads.cmd_export_opportunities(argparse.Namespace(file=path, min_score=int(m) if m.isdigit() else 50))
+            with open(path, "rb") as f:
+                data = f.read()
+        finally:
+            os.unlink(path)
+        ctype = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" if xl else "text/csv; charset=utf-8"
+        self._send(200, data, ctype, {"Content-Disposition": f'attachment; filename="imesta-firsatlar-{dt.date.today().isoformat()}{suffix}"'})
 
     def _export(self, contacts=False):
         with tempfile.NamedTemporaryFile("w+", suffix=".csv", delete=False) as t:
@@ -921,6 +1099,12 @@ class H(BaseHTTPRequestHandler):
         if path == "/import":
             new, dup = leads.import_csv_text(con, f.get("csv", ""), f.get("source") or "csv")
             return self._redirect("/leads", f"{new} yeni firma eklendi, {dup} tekrar/silinmiş atlandı. Puanlamak için Firma bul → Puanla.")
+        if path == "/settings":
+            if f.get("clear"):
+                secrets_util.clear(f["clear"]) if f["clear"] in secrets_util.KEYS else None
+                return self._redirect("/settings", "Anahtar silindi")
+            secrets_util.save({k: v for k, v in f.items() if k in secrets_util.KEYS})
+            return self._redirect("/settings", "Kaydedildi")
         if path == "/suppress":
             if f.get("value"):
                 leads.cmd_suppress(argparse.Namespace(value=f["value"]))
@@ -963,7 +1147,7 @@ class H(BaseHTTPRequestHandler):
                     ccs = [c for c in ccs if c in [x.upper() for x in multi["country"]]]
                 if not ccs:
                     return self._redirect("/tools", "En az bir ülke seçin")
-                ok = run_job(f"{', '.join(cname(c) for c in ccs)} için firma bulunuyor", lambda: find_firms(ccs))
+                ok = run_job(f"Otopilot: {', '.join(cname(c) for c in ccs)}", lambda: autopilot(ccs))
                 return self._redirect("/tools", "Başlatıldı, bu sayfada ilerlemeyi görebilirsiniz" if ok else "Başka bir iş çalışıyor")
             jobs = {"comtrade": ("Pazar verisi çekiliyor", lambda: leads.cmd_harvest_comtrade(argparse.Namespace(hs=None, year=int(f.get("year") or 0) or None))),
                     "enrich": ("Siteler taranıyor", lambda: (leads.cmd_enrich(argparse.Namespace(
@@ -985,6 +1169,11 @@ class H(BaseHTTPRequestHandler):
                 back, do = f.get("back") or here, f.get("do")
                 if do == "snooze":
                     return self._redirect(back, f"Takip {leads.snooze(con, cid, 3)} tarihine ertelendi")
+                if do == "skip":
+                    leads.do_log(con, cid, "note", "Uygun değil olarak işaretlendi", status="lost")
+                    con.execute("UPDATE companies SET lost_reason='uygun değil' WHERE id=?", (cid,))
+                    con.commit()
+                    return self._redirect(back, "Listeden çıkarıldı")
                 if do in QUICK:
                     kind, summary, status = QUICK[do]
                     nxt = leads.do_log(con, cid, kind, summary, status, 2 if do == "replied" else None)

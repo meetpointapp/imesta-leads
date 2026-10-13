@@ -25,6 +25,10 @@ import urllib.robotparser
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import crawler  # noqa: E402
+import translate  # noqa: E402
+import discover  # noqa: E402
+import xlsx  # noqa: E402
+import secrets_util  # noqa: E402
 DB_PATH = os.environ.get("LEADS_DB", os.path.join(HERE, "leads.db"))
 UA = "ImestaFoodBot/1.0 (+https://imestafood.com; B2B supplier research)"
 
@@ -32,6 +36,8 @@ SEGMENTS = {  # segment: (taban puan, e-posta metninde geçen etiket)
     "chocolate_maker": (40, "chocolate manufacturing"),
     "confectionery": (35, "confectionery and biscuits"),
     "distributor": (35, "ingredient distribution"),
+    "biscuit_bakery": (36, "biscuits, cakes and bakery products"),
+    "cereal_snack": (30, "cereals, snacks and spreads"),
     "bakery_ingredient": (30, "bakery and ingredients"),
     "ice_cream": (30, "ice cream and desserts"),
     "dairy_beverage": (25, "dairy and beverages"),
@@ -91,7 +97,9 @@ NEW_COLUMNS = [("value_usd", "REAL"), ("product", "TEXT"), ("lost_reason", "TEXT
                ("twitter", "TEXT"), ("youtube", "TEXT"), ("whatsapp", "TEXT"), ("description", "TEXT"), ("legal_id", "TEXT"),
                ("lang", "TEXT"), ("cocoa_signal", "INTEGER"), ("business_type", "TEXT"), ("employees", "TEXT"), ("founded", "TEXT"),
                ("lat", "REAL"), ("lon", "REAL"), ("data_score", "INTEGER DEFAULT 0"), ("enrich_pages", "INTEGER DEFAULT 0"),
-               ("enrich_error", "TEXT"), ("enrich_v", "INTEGER DEFAULT 0")]
+               ("enrich_error", "TEXT"), ("enrich_v", "INTEGER DEFAULT 0"),
+               ("buyer_type", "TEXT"), ("categories", "TEXT"), ("b2b_signal", "INTEGER"), ("fit_reasons", "TEXT"), ("name_gloss", "TEXT"),
+               ("name_latin", "TEXT"), ("desc_tr", "TEXT"), ("summary_tr", "TEXT"), ("offer", "TEXT")]
 CONTACT_COLUMNS = [("dept", "TEXT"), ("kind", "TEXT"), ("confidence", "INTEGER"), ("source_url", "TEXT")]
 
 
@@ -284,6 +292,7 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
         cur = con.execute("INSERT INTO companies(name,country,city,website,domain,segment,source,notes) VALUES(?,?,?,?,?,?,?,?)",
                           (name, country, city, website or None, domain or None, segment, source, notes))
         cid, new = cur.lastrowid, True
+        con.execute("UPDATE companies SET name_gloss=?, name_latin=? WHERE id=?", (translate.gloss_name(name), translate.translit(name), cid))
     if email or phone:
         add_contact(con, cid, email=email, phone=phone, source=source)
     return cid, new
@@ -312,7 +321,7 @@ def norm_phone_text(raw, country=None):
     return format_phone(p, country) if p else None
 
 
-FILL_COLS = {"address", "phone", "linkedin", "facebook", "instagram", "twitter", "youtube", "whatsapp", "description", "legal_id",
+FILL_COLS = {"buyer_type", "address", "phone", "linkedin", "facebook", "instagram", "twitter", "youtube", "whatsapp", "description", "legal_id",
              "lang", "employees", "founded", "lat", "lon", "city"}
 
 
@@ -376,6 +385,85 @@ def update_data_score(con, cid):
     return s
 
 
+CAT_TR = {"biscuit": "bisküvi", "wafer": "gofret", "cake": "kek/pasta", "bakery": "fırın ürünleri", "ice_cream": "dondurma", "dairy": "süt ürünleri",
+          "beverage": "içecek", "cereal_snack": "tahıl/atıştırmalık", "spread": "ezme/dolgu", "confectionery": "şekerleme", "chocolate": "çikolata",
+          "ingredients": "hammadde/katkı"}
+BUYER_TR = {"industrial": "Kakao kullanan üretici", "distributor": "Toptancı / distribütör", "craft": "Küçük / butik üretici", "retail": "Perakende (dükkân)",
+            "competitor": "Kakao işleyici (rakip olabilir)", "unknown": "Sınıflanmadı"}
+
+
+def infer_segment(cats, buyer, current):
+    if buyer == "distributor":
+        return "distributor"
+    top = {k: v for k, v in cats.items() if k in crawler.USER_CATS}
+    if not top:
+        return current
+    best = max(top, key=top.get)
+    return {"biscuit": "biscuit_bakery", "wafer": "biscuit_bakery", "cake": "biscuit_bakery", "bakery": "biscuit_bakery", "ice_cream": "ice_cream",
+            "dairy": "dairy_beverage", "beverage": "dairy_beverage", "cereal_snack": "cereal_snack", "spread": "cereal_snack",
+            "confectionery": "confectionery", "chocolate": "chocolate_maker"}.get(best, current)
+
+
+def better_name(res, domain):
+    """Sitenin JSON-LD adı ya da başlığından firma adı çıkarır (alan adından türetilmiş geçici ad yerine)."""
+    n = (res.get("ld_name") or "").strip()
+    if not n:
+        title = res.get("title") or ""
+        parts = [p.strip() for p in re.split(r"\s[|\-–—:·•]\s|\|", title) if p.strip()]
+        label = re.sub(r"[^a-z0-9]", "", (domain or "").split(".")[0].lower())
+        match = [p for p in parts if label and label[:5] in re.sub(r"[^a-z0-9]", "", p.lower())]
+        n = (match or parts[:1] or [""])[0]
+    n = re.sub(r"(?i)^(home|startseite|welcome|willkommen|accueil|homepage)\b[\s|:\-–]*", "", n).strip()
+    return n[:80] if 2 <= len(n) <= 80 else None
+
+
+def _emp_int(v):
+    m = re.search(r"\d[\d.,]*", str(v or ""))
+    return int(re.sub(r"\D", "", m.group(0))) if m else 0
+
+
+def suggest_offer(buyer, cats):
+    if buyer == "distributor":
+        return "Ambalajlı kakao tozu ve kakao yağı (25 kg çuval / big bag), özel etiket, depo stoklu teslimat"
+    o = []
+    if any(k in cats for k in ("ice_cream", "dairy", "beverage")):
+        o.append("alkalize, kolay çözünür kakao tozu + kuvertür/kompunt çikolata")
+    if any(k in cats for k in ("biscuit", "wafer", "cake", "bakery")):
+        o.append("kakao tozu (%10-12 / %20-22 yağlı), kakao yağı, kompunt kaplama ve dolgu")
+    if any(k in cats for k in ("chocolate", "confectionery")):
+        o.append("kakao yağı, kakao hamuru (liquor), kuvertür")
+    if any(k in cats for k in ("cereal_snack", "spread")):
+        o.append("kakao tozu, kakao yağı, dolgu/ezme için kompunt")
+    return ("Teklif: " + "; ".join(o[:3])) if o else "Teklif: kakao tozu ve kakao yağı (numune + fiyat listesi)"
+
+
+def build_summary(c, cats, buyer):
+    parts = [BUYER_TR.get(buyer or "unknown", "Sınıflanmadı")]
+    rel = [CAT_TR[k] for k in crawler.USER_CATS if cats.get(k, 0) >= 2 and k in CAT_TR]
+    if rel:
+        parts.append(", ".join(rel[:4]) + " ürünleri")
+    if c["employees"]:
+        parts.append(f"~{c['employees']} çalışan")
+    if c["founded"]:
+        parts.append(f"{c['founded']}'den beri")
+    loc = ", ".join(x for x in (c["city"], COUNTRIES.get((c["country"] or "").upper(), ("",))[0]) if x)
+    if loc:
+        parts.append(loc)
+    return " · ".join(parts)
+
+
+def refresh_derived(con, cid):
+    """Ad çevirisi, Türkçe özet ve teklif önerisini günceller."""
+    c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+    try:
+        cats = json.loads(c["categories"] or "{}")
+    except ValueError:
+        cats = {}
+    con.execute("UPDATE companies SET name_gloss=?, name_latin=?, summary_tr=?, offer=? WHERE id=?",
+                (translate.gloss_name(c["name"]), translate.translit(c["name"]), build_summary(c, cats, c["buyer_type"]),
+                 suggest_offer(c["buyer_type"], cats), cid))
+
+
 def apply_enrichment(con, cid, res):
     """Tarama sonucunu (crawler.crawl_site) veritabanına yazar. {'emails','phones','people','socials'} sayılarını döner."""
     stats = {"emails": 0, "phones": 0, "people": 0, "socials": 0}
@@ -434,16 +522,21 @@ def apply_enrichment(con, cid, res):
     legal_txt = " · ".join(x for x in (f"VAT {legal['vat']}" if legal.get("vat") else "", legal.get("register", "")) if x)
     fill_company(con, cid, address=res["address"], description=res["description"], legal_id=legal_txt, lang=res["lang"],
                  employees=res["facts"].get("employees"), founded=res["facts"].get("founded"))
+    a = res.get("analysis") or {}
+    cats = a.get("cats", {})
+    buyer = a.get("buyer", "unknown")
+    buyer = buyer if buyer != "unknown" else (c["buyer_type"] or "unknown")
     seg = c["segment"]
-    if seg == "other":
-        if res["cocoa_signal"] >= 40 and res["business_type"] == "manufacturer":
-            seg = "chocolate_maker"
-        elif res["cocoa_signal"] >= 25 and res["business_type"] == "wholesale":
-            seg = "distributor"
-        elif res["cocoa_signal"] >= 40 and res["business_type"] == "retail":
-            seg = "retail_craft"
-    con.execute("UPDATE companies SET cocoa_signal=?, business_type=?, segment=?, enriched_at=?, enrich_pages=?, enrich_error=NULL, enrich_v=2 WHERE id=?",
-                (res["cocoa_signal"], res["business_type"], seg, today(), len(res["pages"]), cid))
+    if seg in ("other", "retail_craft"):
+        seg = infer_segment(cats, buyer, seg)
+    name = c["name"]
+    if c["source"] == "search":  # aramadan gelen firmanın adı alan adından türetilmişti: sitedeki gerçek adı kullan
+        name = better_name(res, domain) or name
+    con.execute("UPDATE companies SET name=?, cocoa_signal=?, business_type=?, segment=?, buyer_type=?, categories=?, b2b_signal=?, "
+                "enriched_at=?, enrich_pages=?, enrich_error=NULL, enrich_v=2 WHERE id=?",
+                (name, res["cocoa_signal"], res["business_type"], seg, buyer, json.dumps(cats, ensure_ascii=False), a.get("b2b", 0),
+                 today(), len(res["pages"]), cid))
+    refresh_derived(con, cid)
     update_data_score(con, cid)
     con.commit()
     return stats
@@ -475,10 +568,26 @@ def import_csv_text(con, text, source, segment=None):
             con, r.get("name") or r.get("company"), r.get("country"), r.get("city"),
             r.get("website") or r.get("url"), r.get("segment") or segment or "other",
             source, r.get("notes"), r.get("email"), r.get("phone"))
+        if cid and r.get("buyer_type") in ("industrial", "distributor", "craft", "retail", "competitor"):
+            fill_company(con, cid, buyer_type=r["buyer_type"])
+        if cid and r.get("employees"):
+            fill_company(con, cid, employees=r["employees"])
         new += is_new
         dup += (cid is not None and not is_new)
     con.commit()
     return new, dup
+
+
+def cmd_seed(a):
+    """Hazır başlangıç listesini (bilinen kakao kullanıcısı sanayi ve distribütörler) içe aktarır."""
+    path = os.path.join(HERE, "data", "seed_buyers.csv")
+    con = db()
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        new, dup = import_csv_text(con, f.read(), "seed")
+    for r in con.execute("SELECT id FROM companies WHERE source='seed'").fetchall():
+        refresh_derived(con, r["id"])
+    con.commit()
+    print(f"Hazır liste: {new} yeni firma eklendi, {dup} zaten vardı/silinmişti. Sıradaki: siteleri tara (derin tarama) ve puanla.")
 
 
 def cmd_import_csv(a):
@@ -487,16 +596,24 @@ def cmd_import_csv(a):
     print(f"{new} yeni firma, {dup} tekrar (atlandı).")
 
 
-OSM_FILTERS = {  # segment -> Overpass filtreleri (hafif tutuldu: ülke çapında ağır regex sorgusu zaman aşımına düşer)
+OSM_FILTERS = {  # segment -> Overpass filtreleri. Varsayılan: kakao KULLANAN sanayi/toptan; perakende dükkânlar (retail_craft) isteğe bağlı.
+    "biscuit_bakery": ['["industrial"~"^(bakery|food_industry|food|confectionery|biscuit)"]',
+                       '["man_made"="works"]["name"~"biscuit|keks|cookie|wafer|waffel|bakery|baecker|bäcker|biscotti|galleta|ciastk|geb[aä]ck|backwaren|kuchen|gofret|bisk[uü]vi|f[ıi]r[ıi]n",i]'],
+    "chocolate_maker": ['["craft"="chocolatier"]', '["industrial"="confectionery"]', '["product"="chocolate"]', '["product"="cocoa"]',
+                        '["man_made"="works"]["name"~"chocolate|schokolade|cioccolat|chocolat|confectionery|s[uü]ßwaren|dolciari|[sş]ekerleme|[cç]ikolata",i]'],
+    "ice_cream": ['["product"="ice_cream"]', '["man_made"="works"]["name"~"ice ?cream|speiseeis|gelato|helado|glace|dondurma|lody",i]'],
+    "dairy_beverage": ['["industrial"="dairy"]', '["man_made"="works"]["name"~"dairy|molkerei|milch|latte|laiterie|l[aá]cteos|zuivel|mleczarnia|beverage|getr[aä]nke|bevande|boissons|i[cç]ecek",i]'],
+    "distributor": ['["shop"="wholesale"]["name"~"food|ingredient|zutaten|bak|import|trading|gro[ßs]handel|alimentar|g[ıi]da|toptan|ingredienti|hammadde",i]',
+                    '["office"="company"]["name"~"cocoa|kakao|cacao|ingredients|zutaten|food trading|food import",i]'],
     "retail_craft": ['["shop"="chocolate"]', '["craft"="confectionery"]', '["shop"="confectionery"]'],
-    "chocolate_maker": ['["craft"="chocolatier"]', '["industrial"="confectionery"]', '["product"="chocolate"]', '["product"="cocoa"]'],
     "bakery_ingredient": ['["shop"="wholesale"]["wholesale"="food"]', '["shop"="pastry"]'],
-    "ice_cream": ['["craft"="ice_cream"]', '["shop"="ice_cream"]', '["product"="ice_cream"]'],
 }
+DEFAULT_OSM_SEGMENTS = ["biscuit_bakery", "chocolate_maker", "ice_cream", "dairy_beverage", "distributor"]
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter", "https://overpass.openstreetmap.fr/api/interpreter"]
 SEG_LABEL = {"retail_craft": "butik/perakende", "chocolate_maker": "çikolata üreticisi", "ice_cream": "dondurma",
-             "bakery_ingredient": "pastane/toptan"}
+             "bakery_ingredient": "pastane/toptan", "biscuit_bakery": "bisküvi/kek/fırın sanayi", "dairy_beverage": "süt/içecek",
+             "distributor": "hammadde toptancısı", "cereal_snack": "tahıl/atıştırmalık"}
 CANCEL = threading.Event()  # web arayüzündeki "Durdur" düğmesi bunu kurar
 
 
@@ -534,7 +651,7 @@ def overpass(query, log):
 def cmd_harvest_osm(a):
     """OpenStreetMap'ten (ücretsiz) çikolata/şekerleme/dondurma firmalarını çeker. Ülke başına segment başına 1 sorgu."""
     con = db()
-    segs = a.segments.split(",") if a.segments else ["chocolate_maker", "retail_craft", "ice_cream"]
+    segs = a.segments.split(",") if a.segments else DEFAULT_OSM_SEGMENTS
     segs = [s for s in segs if s in OSM_FILTERS] or ["chocolate_maker"]
     log = lambda m: print(m, flush=True)  # noqa: E731
     total = 0
@@ -672,9 +789,13 @@ def cmd_enrich(a):
     where = "website IS NOT NULL AND website<>''" + ("" if force else " AND IFNULL(enrich_v,0)<2")
     if getattr(a, "ids", None):
         where += f" AND id IN ({','.join(str(int(i)) for i in a.ids)})"
+    ccs = [c for c in (getattr(a, "countries", None) or []) if c in COUNTRIES]
+    if ccs:
+        where += " AND country IN (" + ",".join("'" + c + "'" for c in ccs) + ")"
     rows = con.execute(f"SELECT id,name,website,country FROM companies WHERE {where} ORDER BY score DESC, id LIMIT ?", (a.limit,)).fetchall()
     print(f"{len(rows)} firma taranacak ({workers} paralel, firma başına en fazla {pages} sayfa)…", flush=True)
     tot = {"emails": 0, "phones": 0, "people": 0, "socials": 0, "ok": 0, "fail": 0}
+    imp = market_ranks(con)
 
     def work(r):
         try:
@@ -692,18 +813,97 @@ def cmd_enrich(a):
                 break
             r, res = fut.result()
             st = apply_enrichment(con, r["id"], res)
+            score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (r["id"],)).fetchone(), imp)
+            con.commit()
             done += 1
             if res["ok"]:
                 tot["ok"] += 1
                 for k in ("emails", "phones", "people", "socials"):
                     tot[k] += st[k]
                 print(f"[{done}/{len(rows)}] {get_domain(r['website'])}: {st['emails']} e-posta, {st['phones']} tel, {st['people']} kişi, "
-                      f"{st['socials']} sosyal · kakao {res['cocoa_signal']} · {res['business_type']}", flush=True)
+                      f"{st['socials']} sosyal · {BUYER_TR.get((res.get('analysis') or {}).get('buyer', 'unknown'))}", flush=True)
             else:
                 tot["fail"] += 1
                 print(f"[{done}/{len(rows)}] {get_domain(r['website'])}: ulaşılamadı ({(res['errors'] or ['?'])[0][:90]})", flush=True)
+    con.commit()
     print(f"Bitti: {tot['ok']} site tarandı, {tot['fail']} ulaşılamadı → {tot['emails']} e-posta, {tot['phones']} telefon, "
           f"{tot['people']} kişi, {tot['socials']} sosyal hesap.", flush=True)
+
+
+def cmd_discover(a):
+    """Arama motoru (Brave/Google resmî API) ile ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur."""
+    con = db()
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    prov = discover.provider()
+    if not prov:
+        log("Arama anahtarı tanımlı değil. Ayarlar sayfasından ücretsiz bir Brave Search API ya da Google CSE anahtarı ekleyin.")
+        return
+    ccs = [c.strip().upper() for c in (a.country or "").split(",") if c.strip().upper() in COUNTRIES]
+    segs = [s.strip() for s in (getattr(a, "segments", "") or "").split(",") if s.strip()] or None
+    con.execute("CREATE TABLE IF NOT EXISTS discover_queries(query TEXT PRIMARY KEY, country TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP, n INTEGER)")
+    done = {r[0] for r in con.execute("SELECT query FROM discover_queries")}
+    left, period = discover.quota_left(con, prov)
+    todo = [q for q in discover.build_queries(ccs, segs) if q[2] not in done][:max(0, min(int(getattr(a, "max_queries", 0) or 40), left))]
+    log(f"{prov}: {len(todo)} sorgu çalıştırılacak (kalan hak ~{left}).")
+    total = 0
+    for cc, seg, q in todo:
+        if CANCEL.is_set():
+            log("Durduruldu.")
+            break
+        try:
+            res = discover.search(prov, q, cc, 20 if prov == "brave" else 10)
+        except urllib.error.HTTPError as e:
+            log(f"  ! {prov} HTTP {e.code}: " + ("anahtar geçersiz ya da yetkisiz" if e.code in (401, 403) else "limit aşıldı, sonra tekrar deneyin" if e.code == 429 else str(e)))
+            if e.code in (401, 403, 429):
+                break
+            continue
+        except Exception as e:
+            log(f"  ! {e}")
+            continue
+        discover.use_quota(con, prov, period)
+        cands = discover.candidates(res)
+        n = 0
+        for host, name, snippet, url in cands:
+            cid, is_new = upsert_company(con, name, cc, None, url, seg, "search")
+            if cid and is_new:
+                fill_company(con, cid, description=snippet)
+                n += 1
+        con.execute("INSERT OR REPLACE INTO discover_queries(query,country,n) VALUES(?,?,?)", (q, cc, len(cands)))
+        con.commit()
+        total += n
+        log(f"  [{cc}] {q}: {len(cands)} site, {n} yeni")
+        CANCEL.wait(1.1)  # API nezaketi (Brave: saniyede 1 istek)
+    log(f"Arama keşfi bitti: {total} yeni aday firma. Sıradaki adım: derin tarama (alıcı olup olmadığını site belirler).")
+
+
+def cmd_translate(a):
+    """En uygun firmaların site açıklamalarını Türkçeye çevirir (önbellekli; ücretsiz MyMemory, anahtar varsa Claude/LibreTranslate)."""
+    con = db()
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    email = config().get("sender_email", "")
+    email = email if re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email or "") else ""
+    rows = con.execute("SELECT id,description,lang,country FROM companies WHERE description IS NOT NULL AND description<>'' AND (desc_tr IS NULL OR desc_tr='') "
+                       "AND score>=? ORDER BY score DESC LIMIT ?", (int(getattr(a, "min_score", 0) or 40), int(getattr(a, "limit", 0) or 40))).fetchall()
+    ok = fail = 0
+    for r in rows:
+        if CANCEL.is_set():
+            break
+        src = (r["lang"] or discover.LANG_OF.get((r["country"] or "").upper(), "en")).lower()
+        if src == "tr":
+            con.execute("UPDATE companies SET desc_tr=description WHERE id=?", (r["id"],))
+            continue
+        res, info = translate.translate_text(con, r["description"], src, email)
+        if res:
+            con.execute("UPDATE companies SET desc_tr=? WHERE id=?", (res, r["id"]))
+            ok += 1
+        else:
+            fail += 1
+            log(f"  çevrilemedi: {info}")
+            if info and "limit" in str(info).lower():
+                break
+        con.commit()
+    con.commit()
+    log(f"Çeviri: {ok} açıklama Türkçeye çevrildi" + (f", {fail} başarısız (ücretsiz günlük limit dolmuş olabilir; yarın ya da Ayarlar'dan Claude/LibreTranslate anahtarı ekleyin)" if fail else "."))
 
 
 WIKIDATA_TERMS = ["chocolate", "confectionery", "cocoa", "candy", "biscuit", "bakery", "ice cream"]
@@ -768,23 +968,75 @@ def market_ranks(con):
 
 
 def score_company(con, c, imp):
-    """Firma puanı 0-100: segment + site + e-posta + kakao sinyali + firma tipi + karar verici + pazar büyüklüğü."""
-    s = SEGMENTS.get(c["segment"], SEGMENTS["other"])[0]
-    s += 5 if c["website"] else 0
-    ok = con.execute("SELECT COUNT(*) FROM contacts WHERE company_id=? AND email_ok=1", (c["id"],)).fetchone()[0]
-    s += 15 if ok else 0
-    s += min(15, (c["cocoa_signal"] or 0) // 7)  # sitesinde kakao/çikolata geçiyor mu
-    s += {"manufacturer": 8, "wholesale": 5, "retail": -8}.get(c["business_type"] or "", 0)
-    ks = con.execute("SELECT dept,name,phone FROM contacts WHERE company_id=?", (c["id"],)).fetchall()
-    s += 3 if (c["phone"] or any(k["phone"] for k in ks)) else 0
-    s += 5 if any(k["name"] for k in ks) else 0
-    s += 6 if any(k["dept"] in ("purchasing", "export", "sales") for k in ks) else 0
+    """Alıcı uygunluk puanı 0-100 + 'neden potansiyel' gerekçeleri (Türkçe). Puan: firma tipi + ürünler + kakao sinyali + ölçek + B2B + iletişim + pazar."""
+    ks = con.execute("SELECT * FROM contacts WHERE company_id=?", (c["id"],)).fetchall()
+    bt = c["buyer_type"] or "unknown"
+    enriched = (c["enrich_v"] or 0) >= 2 and not c["enrich_error"]
+    reasons = []
+    base = {"industrial": 38, "distributor": 32, "craft": 10, "retail": 0, "competitor": 6}.get(bt)
+    if base is None:  # henüz sınıflanmadı: segmentten kaba tahmin
+        base = round(SEGMENTS.get(c["segment"], SEGMENTS["other"])[0] * 0.55)
+    s = base
+    reasons.append({"industrial": "Kakao kullanan üretici (sanayi alıcısı)", "distributor": "Toptancı/distribütör: tekrar eden toplu alım",
+                    "craft": "Küçük/butik üretici: düşük hacim", "retail": "Perakende dükkân: toplu alıcı değil",
+                    "competitor": "Kakao işleyici: rakip olabilir"}.get(bt, "Site henüz taranmadı" if not enriched else "Firma tipi belirlenemedi"))
+    try:
+        cats = json.loads(c["categories"] or "{}")
+    except ValueError:
+        cats = {}
+    rel = [k for k in crawler.USER_CATS if cats.get(k, 0) >= 2]
+    if rel:
+        s += min(14, 4 * len(rel))
+        reasons.append("Ürünler: " + ", ".join(CAT_TR[k] for k in rel[:4]))
+    if bt == "distributor" and cats.get("ingredients", 0) >= 3:
+        s += 8
+        reasons.append("Gıda/fırın hammaddesi ticareti yapıyor: kakao ürünlerini portföyüne ekleyebilir")
+    cocoa = c["cocoa_signal"] or 0
+    if cocoa >= 30:
+        s += min(8, cocoa // 12)
+        reasons.append("Sitede kakao/çikolata ifadeleri yoğun")
+    emp = _emp_int(c["employees"])
+    if emp:
+        if 50 <= emp <= 2000:
+            s += 10
+            reasons.append(f"Orta/büyük ölçek (~{emp} çalışan): doğrudan tedarikçi arar")
+        elif 20 <= emp < 50:
+            s += 6
+            reasons.append(f"Küçük-orta ölçek (~{emp} çalışan)")
+        elif emp > 2000:
+            s += 4
+            reasons.append(f"Çok büyük (~{emp}): merkezi satın alma, zor ama hacimli")
+        elif emp < 10:
+            s -= 4
+            reasons.append("Çok küçük işletme")
+    if (c["b2b_signal"] or 0) >= 2:
+        s += 6
+        reasons.append("B2B / toptan / özel markalı üretim sinyali")
+    buyer_ct = [k for k in ks if k["dept"] in ("purchasing", "export", "sales")]
+    if any(k["name"] for k in buyer_ct):
+        s += 9
+        reasons.append("Satın alma/ihracat/satış sorumlusu adıyla bulundu")
+    elif buyer_ct:
+        s += 6
+        reasons.append("Satın alma/ihracat/satış e-postası bulundu")
+    elif any(k["name"] for k in ks):
+        s += 4
+    if any(k["email_ok"] for k in ks):
+        s += 4
+    if c["phone"] or any(k["phone"] for k in ks):
+        s += 1
     info = imp.get(ISO2_TO_ISO3.get(c["country"] or ""))
     if info:
-        s += max(0, 25 - info[0])  # ilk sıradaki ithalatçı ülke 24 puan alır
-        s += 10 if info[1] > 0 else 0
+        bonus = round(max(0, 25 - info[0]) * 0.5)
+        if bonus:
+            s += bonus
+            reasons.append(f"Pazar: {COUNTRIES[c['country']][0]} kakao ithalatında {info[0]}. sırada")
+        if info[1] > 0:
+            s += 3
+            reasons.append("Bu ülke Türkiye'den zaten kakao alıyor")
     s = max(0, min(s, 100))
-    con.execute("UPDATE companies SET score=? WHERE id=?", (s, c["id"]))
+    s = min(s, {"retail": 25, "competitor": 35, "craft": 45}.get(bt, 100))
+    con.execute("UPDATE companies SET score=?, fit_reasons=? WHERE id=?", (s, json.dumps(reasons, ensure_ascii=False), c["id"]))
     update_data_score(con, c["id"])
     return s
 
@@ -794,7 +1046,8 @@ def cmd_score(a):
     imp = market_ranks(con)
     rows = con.execute("SELECT * FROM companies").fetchall()
     for c in rows:
-        score_company(con, c, imp)
+        refresh_derived(con, c["id"])
+        score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (c["id"],)).fetchone(), imp)
     con.commit()
     print(f"{len(rows)} firma puanlandı.")
 
@@ -974,6 +1227,79 @@ def cmd_report(a):
     print(f"\nTakibi gelmiş: {due}")
 
 
+def contact_summary(con, cid):
+    """Bir firmada ulaşılacak en uygun kişi: (adlı karar verici, en iyi geçerli e-posta, telefon)."""
+    ks = con.execute("SELECT * FROM contacts WHERE company_id=?", (cid,)).fetchall()
+    prio = crawler.DEPT_PRIORITY
+    people = sorted([k for k in ks if k["name"]], key=lambda k: (k["dept"] not in ("purchasing", "export", "sales", "management"), prio.get(k["dept"] or "other", 12), k["id"]))
+    em = best_contact(con, cid)
+    phone = next((k["phone"] for k in ks if k["phone"]), None)
+    person = people[0] if people else None
+    # adlı kişinin e-postası varsa onu, yoksa en iyi genel/departman adresini göster
+    return {"person": person["name"] if person else None, "role": person["role"] if person else None, "dept": (person["dept"] if person else (em["dept"] if em else None)),
+            "email": (person["email"] if person and person["email"] and person["email_ok"] else (em["email"] if em else None)),
+            "email_dept": em["dept"] if em else None, "email_guess": bool(em and em["kind"] == "guess"), "phone": phone}
+
+
+def opportunity_rows(con, country=None, min_score=50, btype=None, ready=False, limit=None):
+    """Kakao alıcısı olması muhtemel firmalar (sanayi kullanıcısı / distribütör), uygunluk puanına göre. Her satıra 'contact' eklenir."""
+    types = (btype,) if btype in ("industrial", "distributor") else ("industrial", "distributor")
+    sql = ("SELECT * FROM companies WHERE status NOT IN ('lost','won') AND score>=? AND IFNULL(buyer_type,'unknown') IN (" + ",".join("?" * len(types)) + ")")
+    p = [min_score, *types]
+    if country:
+        sql += " AND country=?"
+        p.append(country)
+    if ready:
+        sql += " AND id IN (SELECT company_id FROM contacts WHERE email_ok=1)"
+    sql += " ORDER BY score DESC, id"
+    if limit:
+        sql += f" LIMIT {int(limit)}"
+    out = []
+    for r in con.execute(sql, p).fetchall():
+        d = dict(r)
+        d["contact"] = contact_summary(con, r["id"])
+        try:
+            d["reasons"] = json.loads(r["fit_reasons"] or "[]")
+        except ValueError:
+            d["reasons"] = []
+        out.append(d)
+    return out
+
+
+def opportunity_table(con, **kw):
+    """Excel/CSV için: (başlıklar, satırlar)."""
+    from collections import OrderedDict  # noqa: F401
+    head = ["#", "Ülke", "Firma", "Firma adı (Türkçe anlamı / Latin harfli)", "Tip", "Segment", "Uygunluk", "Neden potansiyel", "Özet", "Teklif önerisi", "Web sitesi",
+            "Kişi (satın alma/ihracat/satış)", "Görev", "E-posta", "E-posta türü", "Telefon", "WhatsApp", "LinkedIn", "Adres", "Çalışan", "Durum", "Açıklama (Türkçe)"]
+    rows = []
+    for i, d in enumerate(opportunity_rows(con, **kw), 1):
+        ct = d["contact"]
+        rows.append([i, COUNTRIES.get(d["country"] or "", (d["country"] or "",))[0], d["name"], d["name_gloss"] or d["name_latin"] or "", BUYER_TR.get(d["buyer_type"] or "unknown"),
+                     d["segment"], d["score"], " • ".join(d["reasons"]), d["summary_tr"] or "", d["offer"] or "", d["website"] or "", ct["person"] or "", ct["role"] or "",
+                     ct["email"] or "", ("tahmin" if ct["email_guess"] else (ct["email_dept"] or "")), d["phone"] or ct["phone"] or "", d["whatsapp"] or "", d["linkedin"] or "",
+                     d["address"] or "", d["employees"] or "", d["status"], d["desc_tr"] or d["description"] or ""])
+    return head, rows
+
+
+def cmd_export_opportunities(a):
+    """Fırsat listesi: .xlsx (iki sayfa: Fırsatlar + Tüm kişiler) ya da .csv."""
+    con = db()
+    head, rows = opportunity_table(con, min_score=int(getattr(a, "min_score", 50) or 50))
+    if a.file.lower().endswith(".xlsx"):
+        ks = con.execute("""SELECT c.name, c.country, c.score, k.name, k.role, k.dept, k.email, k.kind, k.phone FROM contacts k JOIN companies c ON c.id=k.company_id
+                            WHERE c.buyer_type IN ('industrial','distributor') AND c.score>=? ORDER BY c.score DESC, c.id""", (int(getattr(a, "min_score", 50) or 50),)).fetchall()
+        with open(a.file, "wb") as f:
+            f.write(xlsx.make_xlsx([("Fırsatlar", [head] + rows, [5, 14, 30, 34, 22, 20, 10, 60, 50, 50, 28, 26, 24, 32, 12, 18, 18, 36, 36, 10, 14, 60]),
+                                    ("Tüm kişiler", [["Firma", "Ülke", "Uygunluk", "Kişi", "Görev", "Departman", "E-posta", "Tür", "Telefon"]] + [list(map(lambda v: v if v is not None else "", r)) for r in ks],
+                                     [30, 8, 10, 24, 26, 14, 34, 10, 18])]))
+    else:
+        with open(a.file, "w", newline="", encoding="utf-8-sig") as f:
+            w = csv.writer(f)
+            w.writerow(head)
+            w.writerows(rows)
+    print(f"{len(rows)} fırsat → {a.file}")
+
+
 def cmd_export(a):
     con = db()
     rows = con.execute("""SELECT c.id,c.name,c.country,c.city,c.address,c.website,c.segment,c.business_type,c.score,c.data_score,c.status,c.phone,c.whatsapp,
@@ -1027,6 +1353,11 @@ def main():
     s = add("enrich", cmd_enrich, "sitelerden e-posta, telefon, kişi, sosyal medya, adres topla (derin tarama)")
     s.add_argument("--limit", type=int, default=50); s.add_argument("--workers", type=int, default=6)
     s.add_argument("--pages", type=int, default=8); s.add_argument("--force", action="store_true", help="daha önce taranmışları da yeniden tara")
+    s = add("discover", cmd_discover, "arama motoru (Brave/Google API) ile yeni alıcı adayları bul")
+    s.add_argument("--country", required=True, help="ISO2 virgülle: DE,NL,GB"); s.add_argument("--segments", default=""); s.add_argument("--max-queries", type=int, default=40)
+    s = add("translate", cmd_translate, "en uygun firmaların açıklamalarını Türkçeye çevir")
+    s.add_argument("--limit", type=int, default=40); s.add_argument("--min-score", type=int, default=40)
+    add("seed", cmd_seed, "hazır başlangıç listesini (bilinen alıcılar) içe aktar")
     s = add("harvest-wikidata", cmd_harvest_wikidata, "Wikidata'dan bilinen çikolata/şekerleme firmalarını çek")
     s.add_argument("--country", default="", help="ISO2 virgülle (boş = hepsi)")
     add("score", cmd_score, "firmaları puanla")
@@ -1044,6 +1375,7 @@ def main():
     s.add_argument("id", type=int); s.add_argument("--lang", default="en"); s.add_argument("--template", default="cold")
     add("report", cmd_report, "özet rapor")
     s = add("export", cmd_export, "CSV (Excel) dışa aktar"); s.add_argument("file")
+    s = add("export-opps", cmd_export_opportunities, "fırsat listesi (.xlsx veya .csv)"); s.add_argument("file"); s.add_argument("--min-score", type=int, default=50)
     s = add("export-contacts", cmd_export_contacts, "kişi/e-posta listesini CSV'ye aktar (toplu posta için)"); s.add_argument("file")
 
     a = p.parse_args()

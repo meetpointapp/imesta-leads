@@ -21,6 +21,17 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
    (Git istemezseniz GitHub'da **Code → Download ZIP**.) Güncellemek için klasörde `git pull`; `leads.db` verileriniz git'e girmez, silinmez.
 3. `baslat.bat` dosyasına çift tıklayın; tarayıcıda panel açılır. (Komut satırından: `py web.py`. Windows'ta `python3` değil `py` veya `python` yazılır.)
 
+## Nasıl çalışır? (alıcı istihbaratı)
+
+Hedef: Google'da elle aramak yerine, **kakaoyu hammadde olarak satın alacak firmaları** hazır, gerekçeli ve iletişimiyle birlikte listelemek.
+
+1. **Keşfet → Otopilot:** ülke seç, tek düğme. Sırayla: hazır alıcı listesi (~150 bilinen kakao kullanıcısı/distribütör) → arama motoru keşfi (yerel dillerde, anahtar varsa) → harita verisi (bisküvi/dondurma/süt sanayi, toptancılar; **dükkânlar değil**) → Wikidata → sitelerin derin taraması → puanlama + çeviri.
+2. **Fırsatlar:** ülke ülke sıralı kartlar. Her kartta: uygunluk puanı (0–100), **neden potansiyel** (Türkçe gerekçeler), firma adının Türkçe anlamı, ne ürettiği, ne teklif edileceği, kime yazılacağı (satın alma/ihracat/satış kişisi, e-posta, telefon), firmanın kendini anlatışının Türkçesi. Tek tıkla taslak, "gönderdim", "uygun değil". **Excel indir** (2 sayfa: fırsatlar + tüm kişiler).
+3. **Alıcı tipi** her sitede otomatik belirlenir: *kakao kullanan üretici* (bisküvi, gofret, kek, dondurma, süt, tahıl, ezme, şekerleme), *toptancı/distribütör*, *küçük/butik*, *perakende dükkân* (fırsat değil), *kakao işleyici = rakip* (fırsat değil).
+4. **Puan** = firma tipi + ürünler + kakao ilgisi + ölçek (50–2000 çalışan en iyi) + B2B sinyali + ulaşılabilirlik (satın alma kişisi, e-posta) + pazar büyüklüğü (Comtrade).
+
+Arama motoru keşfi için ücretsiz Brave Search ya da Google CSE anahtarı **Ayarlar** sayfasından eklenir (anahtarsız da çalışır; o zaman harita + Wikidata + hazır liste kullanılır). Çeviri anahtarsız ücretsiz MyMemory ile; Claude/LibreTranslate anahtarı isteğe bağlı.
+
 ## Derin veri toplama (iletişim bilgileri)
 
 **Firma bul → Seçili ülkelerde bul ve tara** (ya da komut satırında `python3 leads.py enrich`) her firmanın web sitesine girip herkese açık sayfalarını (ana sayfa, iletişim, impressum, ekip, hakkında, ürünler, sitemap) gezer ve şunları kaydeder:

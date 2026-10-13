@@ -21,7 +21,8 @@ orig_crawl = crawler.crawl_site
 leads.time.sleep = lambda s: None
 
 
-def setUpModule():  # sahte ağ sadece bu modülün testlerinde geçerli
+def setUpModule():  # sahte ağ ve ayrı veritabanı sadece bu modülün testlerinde geçerli
+    leads.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
     crawler.crawl_site = lambda url, **kw: orig_crawl(url, max_pages=kw.get("max_pages", 8), delay=0, cancel=kw.get("cancel"), fetcher=fake(PAGES))
 
 
@@ -65,7 +66,8 @@ class T(unittest.TestCase):
         self.assertIn("linkedin.com/company/koeln-kakao", c["linkedin"])
         self.assertTrue(c["instagram"].endswith("koelnkakao"))
         self.assertEqual((c["employees"], c["founded"], c["lang"]), ("120", "1987", "de"))
-        self.assertEqual(c["segment"], "chocolate_maker")  # 'other' iken site sinyalinden belirlendi
+        self.assertEqual(c["segment"], "biscuit_bakery")  # 'other' iken ürün kategorilerinden belirlendi
+        self.assertEqual(c["buyer_type"], "industrial")
         self.assertEqual(c["business_type"], "manufacturer")
         self.assertGreaterEqual(c["data_score"], 90)
         self.assertEqual(c["enrich_v"], 2)
@@ -78,7 +80,14 @@ class T(unittest.TestCase):
         # puanlama yeni sinyalleri kullanır
         leads.cmd_score(argparse.Namespace())
         con = leads.db()
-        self.assertGreaterEqual(con.execute("SELECT score FROM companies WHERE id=?", (cid,)).fetchone()[0], 80)
+        row = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+        self.assertGreaterEqual(row["score"], 75)
+        reasons = json.loads(row["fit_reasons"])
+        self.assertIn("Kakao kullanan üretici (sanayi alıcısı)", reasons)
+        self.assertTrue(any("bisküvi" in r for r in reasons))
+        self.assertTrue(any("sorumlusu" in r or "e-postası bulundu" in r for r in reasons))
+        self.assertIn("bisküvi", row["summary_tr"])
+        self.assertIn("Teklif", row["offer"])
         # tekrar tarama: atlanır; force ile çift kayıt oluşmaz
         n0 = con.execute("SELECT COUNT(*) FROM contacts WHERE company_id=?", (cid,)).fetchone()[0]
         out = io.StringIO()
@@ -149,6 +158,23 @@ class T(unittest.TestCase):
         c = leads.db().execute("SELECT * FROM companies WHERE domain='chocladen.de'").fetchone()
         self.assertEqual((c["phone"], c["address"], c["lat"]), ("+49221777888", "Hauptstr. 5, 50667 Köln", 50.9))
         self.assertTrue(c["instagram"].endswith("chocladen"))
+
+    def test_names_and_scoring(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Süßwaren Müller GmbH", "DE", None, "https://mueller-suess.de", "other", "test")
+        cid2, _ = leads.upsert_company(con, "Мир Шоколада", "RU", None, None, "other", "test")
+        con.commit()
+        r = con.execute("SELECT name_gloss, name_latin FROM companies WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(r["name_gloss"], "Şekerleme Müller Ltd. Şti.")
+        self.assertEqual(con.execute("SELECT name_latin FROM companies WHERE id=?", (cid2,)).fetchone()[0], "Mir Shokolada")
+        # perakende ve rakip tavanları
+        con.execute("UPDATE companies SET buyer_type='retail', categories='{\"chocolate\":5}', cocoa_signal=90 WHERE id=?", (cid,))
+        con.execute("UPDATE companies SET buyer_type='competitor' WHERE id=?", (cid2,))
+        con.commit()
+        imp = leads.market_ranks(con)
+        self.assertLessEqual(leads.score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone(), imp), 25)
+        self.assertLessEqual(leads.score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (cid2,)).fetchone(), imp), 35)
+        con.commit()
 
     def test_delete_still_blocks(self):
         con = leads.db()
