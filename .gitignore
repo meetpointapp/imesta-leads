@@ -4,3 +4,4 @@ out/
 __pycache__/
 secrets.json
 backups/
+sunucu/
