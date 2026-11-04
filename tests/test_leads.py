@@ -183,6 +183,53 @@ class T(unittest.TestCase):
         leads.delete_companies(con, [cid])
         self.assertEqual(leads.upsert_company(con, "Silinecek", "DE", None, "https://silinecek.de", "other", "osm"), (None, False))
 
+    def test_quote_sample_task(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Teklif Kek GmbH", "DE", None, "https://teklif-kek.de", "biscuit_bakery", "test")
+        con.commit()
+        sid = leads.add_deal(con, cid, "sample", "Kakao tozu (alkalize)", tracking="DHL123")
+        c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(c["status"], "sample")
+        valid = (leads.dt.date.today() + leads.dt.timedelta(days=12)).isoformat()
+        qid = leads.add_deal(con, cid, "quote", "Kakao tozu (alkalize)", 20, 8.4, "USD", "FOB", valid)
+        c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+        self.assertEqual((c["status"], c["value_usd"]), ("negotiation", 168000))
+        self.assertEqual(c["next_followup"], (leads.dt.date.today() + leads.dt.timedelta(days=10)).isoformat())  # bitişten 2 gün önce
+        leads.close_deal(con, sid, "won")  # numune beğenildi: durum geri gitmez
+        self.assertEqual(con.execute("SELECT status FROM companies WHERE id=?", (cid,)).fetchone()[0], "negotiation")
+        leads.close_deal(con, qid, "won")
+        self.assertEqual(con.execute("SELECT status FROM companies WHERE id=?", (cid,)).fetchone()[0], "won")
+        self.assertEqual(leads.open_deals(con), [])
+        tid = leads.add_task(con, "Spec sheet gönder", None, cid)
+        self.assertEqual([t["title"] for t in leads.open_tasks(con, cid)], ["Spec sheet gönder"])
+        leads.done_task(con, tid)
+        self.assertEqual(leads.open_tasks(con, cid), [])
+        self.assertIn("Görev tamamlandı", con.execute("SELECT summary FROM activities WHERE company_id=? ORDER BY id DESC", (cid,)).fetchone()[0])
+
+    def test_archive_rules(self):
+        con = leads.db()
+        shop, _ = leads.upsert_company(con, "Kafe Arşiv", "RU", None, None, "retail_craft", "osm")
+        kept, _ = leads.upsert_company(con, "Kanıtlı Dükkan", "RU", None, None, "retail_craft", "osm")
+        star, _ = leads.upsert_company(con, "Yıldızlı Dükkan", "RU", None, None, "retail_craft", "osm")
+        con.execute("UPDATE companies SET evidence='{\"n\":3,\"ingredients\":[\"en:cocoa-powder\"]}' WHERE id=?", (kept,))
+        con.execute("UPDATE companies SET starred=1 WHERE id=?", (star,))
+        con.commit()
+        self.assertGreaterEqual(dict(leads.archive_candidates(con))["haritadan gelen dükkân/butik (sanayi alıcısı değil)"], 1)
+        leads.auto_archive(con)
+        arch = {r[0]: r[1] for r in con.execute("SELECT id, archived FROM companies WHERE id IN (?,?,?)", (shop, kept, star))}
+        self.assertEqual(arch, {shop: 1, kept: 0, star: 0})
+
+    def test_email_hook_uses_evidence(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Hook Kekse", "DE", None, "https://hook-kekse.de", "biscuit_bakery", "test")
+        leads.add_contact(con, cid, email="einkauf@hook-kekse.de", dept="purchasing")
+        con.execute("UPDATE companies SET evidence=? WHERE id=?", (json.dumps({"n": 4, "ingredients": ["en:cocoa-powder"], "examples": ["Schoko Taler"]}), cid))
+        con.commit()
+        _, de = leads.render_email(con, cid, "de", "cold")
+        _, en = leads.render_email(con, cid, "en", "cold")
+        self.assertIn("Da Hook Kekse in Produkten wie „Schoko Taler“ Kakaopulver verwendet, möchte ich fragen", de)
+        self.assertIn("I noticed that Hook Kekse uses cocoa powder in products such as “Schoko Taler”, so I wanted", en)
+
 
 if __name__ == "__main__":
     unittest.main()

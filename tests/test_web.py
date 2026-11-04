@@ -192,24 +192,55 @@ class T(unittest.TestCase):
         b = b.decode()
         for needle in ("Alıcı mı?", "Neden potansiyel?", "Ne teklif edilir?", "Bisküvi, gofret ve kek üreticisi."):
             self.assertIn(needle, b)
-        s, b = get("/leads?buyer_type=competitor")
+        s, b = get("/leads?buyer_type=competitor&arsiv=1")  # otopilot rakipleri arşive kaldırır
         self.assertIn("Valrhona", b.decode())
         self.assertNotIn("Bahlsen", b.decode())
+
+    def test_crm_flow(self):
+        con = leads.db()
+        cid = con.execute("SELECT id FROM companies WHERE domain='bahlsen.com'").fetchone()[0]
+        con.close()
+        post(f"/lead/{cid}/deal", [("kind", "quote"), ("product", "Kakao tozu (doğal)"), ("qty_t", "10"), ("price_kg", "7,5"), ("currency", "EUR"),
+                                   ("incoterm", "FOB"), ("valid_until", "2099-01-01")])
+        post("/task/new", [("title", "Fiyat listesini gönder"), ("cid", str(cid)), ("back", f"/lead/{cid}")])
+        s, b = get(f"/lead/{cid}")
+        b = b.decode()
+        for needle in ("Teklif ve numune", "Kakao tozu (doğal)", "7.5 EUR/kg", "Fiyat listesini gönder", "Kabul"):
+            self.assertIn(needle, b)
+        s, b = get("/pipeline")
+        self.assertIn("10 ton", b.decode())
+        con = leads.db()
+        did = con.execute("SELECT id FROM deals WHERE company_id=?", (cid,)).fetchone()[0]
+        tid = con.execute("SELECT id FROM tasks WHERE company_id=?", (cid,)).fetchone()[0]
+        con.close()
+        post(f"/task/{tid}/done", [("back", "/")])
+        post(f"/deal/{did}/close", [("outcome", "lost"), ("back", "/pipeline")])
+        post(f"/lead/{cid}/archive", [])
+        con = leads.db()
+        c = con.execute("SELECT archived, status FROM companies WHERE id=?", (cid,)).fetchone()
+        self.assertEqual(c["archived"], 1)
+        self.assertEqual(con.execute("SELECT status FROM deals WHERE id=?", (did,)).fetchone()[0], "lost")
+        con.execute("UPDATE companies SET archived=0 WHERE id=?", (cid,))
+        con.commit()
+        con.close()
+        s, b = get("/")
+        self.assertIn("kanıtlı alıcı", b.decode())
 
     def test_autopilot_runs(self):
         out = io.StringIO()
         old = sys.stdout
         sys.stdout = out
         calls = []
-        o_osm, o_wd = leads.cmd_harvest_osm, leads.cmd_harvest_wikidata
+        o_osm, o_wd, o_pr = leads.cmd_harvest_osm, leads.cmd_harvest_wikidata, leads.cmd_harvest_products
         leads.cmd_harvest_osm = lambda a: calls.append(("osm", a.country))
         leads.cmd_harvest_wikidata = lambda a: calls.append(("wd", a.country))
+        leads.cmd_harvest_products = lambda a: calls.append(("urun", a.country))
         try:
             web.autopilot(["DE", "IT"])
         finally:
             sys.stdout = old
-            leads.cmd_harvest_osm, leads.cmd_harvest_wikidata = o_osm, o_wd
-        self.assertEqual(calls, [("osm", "DE,IT"), ("wd", "DE,IT")])
+            leads.cmd_harvest_osm, leads.cmd_harvest_wikidata, leads.cmd_harvest_products = o_osm, o_wd, o_pr
+        self.assertEqual(calls, [("urun", "DE,IT"), ("osm", "DE,IT"), ("wd", "DE,IT")])
         self.assertIn("alıcı fırsatı hazır", web.JOB["summary"])
 
 

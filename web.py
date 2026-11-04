@@ -32,7 +32,7 @@ OPEN_STATUSES = ("contacted", "replied", "sample", "negotiation")
 SEGMENT_TR = {"biscuit_bakery": "Bisküvi / kek / fırın sanayi", "cereal_snack": "Tahıl / atıştırmalık / ezme", "chocolate_maker": "Çikolata üreticisi", "confectionery": "Şekerleme / bisküvi", "distributor": "Distribütör",
               "bakery_ingredient": "Pastane / fırın malzemesi", "ice_cream": "Dondurma", "dairy_beverage": "Süt / içecek",
               "retail_craft": "Butik / perakende", "other": "Diğer"}
-KIND_TR = {"email": "E-posta", "call": "Arama", "sample": "Numune", "meeting": "Görüşme", "note": "Not"}
+KIND_TR = {"email": "E-posta", "call": "Arama", "sample": "Numune", "quote": "Teklif", "meeting": "Görüşme", "note": "Not"}
 DEPT_TR = {"purchasing": "Satın alma", "export": "İhracat", "sales": "Satış", "management": "Yönetim", "person": "Kişi", "info": "Genel",
            "marketing": "Pazarlama", "quality": "Kalite", "logistics": "Lojistik", "support": "Destek", "accounting": "Muhasebe", "hr": "İK",
            "personal": "Kişisel posta", "other": "Diğer", "phone": "Telefon"}
@@ -75,6 +75,8 @@ ICONS = {
     "target": '<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>',
     "sliders": '<line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/>',
     "x": '<line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>',
+    "archive": '<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>',
+    "file": '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="13" y2="17"/>',
 }
 
 
@@ -108,6 +110,14 @@ def ago(d):
 
 def money(v):
     return "—" if not v else "$" + f"{v:,.0f}".replace(",", ".")
+
+
+def price_num(s):
+    """Birim fiyat: '8,40' ve '8.40' ikisi de 8.4 (binlik ayırıcı beklenmez)."""
+    try:
+        return float(str(s).replace(",", ".").replace("$", "").replace("€", "").strip()) if str(s or "").strip() else None
+    except ValueError:
+        return None
 
 
 def num(s):
@@ -215,6 +225,15 @@ details summary{cursor:pointer;color:var(--muted);font-weight:600;margin:6px 0}
 .opp .acts{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:auto}.cc{margin:22px 0 10px;display:flex;align-items:baseline;gap:10px}.cc h2{margin:0}
 .opp details{font-size:13px;color:#6f5f50}.opp details summary{margin:0;font-weight:500}
 .row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.plan{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:24px}
+.plan a{display:flex;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:12px 14px;text-decoration:none;color:var(--ink)}
+.plan a:hover{border-color:var(--accent)}.plan b{font:600 26px Georgia,serif;color:var(--brand);min-width:30px;text-align:center}.plan a.bad b{color:var(--bad)}.plan a.zero{opacity:.5}
+.plan span{font-size:13.5px;line-height:1.35;font-weight:600}.plan small{display:block;color:var(--muted);font-weight:400}
+.evid{background:#eef7ee;border:1px solid #cfe6d0;border-radius:8px;padding:7px 11px;font-size:13.5px;color:#1f5a23}.evid b{color:#1f5a23}
+table.mini td,table.mini th{padding:7px 9px;font-size:13px}
+.tk{display:flex;gap:10px;align-items:center;padding:8px 0;border-top:1px dashed var(--line)}.tk:first-child{border-top:0}.tk .t{flex:1}.tk .t small{display:block;color:var(--muted)}
+details.box{border:1px solid var(--line);border-radius:10px;padding:8px 12px;margin-top:10px}details.box[open]{background:#fffcf6}details.box summary{margin:0}
+.warnbar{background:#fff1cf;border:1px solid #ecd596;border-radius:10px;padding:10px 14px;margin-bottom:16px}
 """
 
 SCRIPT = """
@@ -249,7 +268,7 @@ def layout(title, body, active="", flash="", due=0):
     logo = cfg.get("theme", {}).get("logo_url")
     mark = f'<img src="{esc(logo)}" alt="">' if logo else icon("zap", 20)
     nav = [("/", "Bugün", "today"), ("/firsatlar", "Fırsatlar", "target"), ("/pipeline", "Satış hattı", "board"), ("/leads", "Firmalar", "users"),
-           ("/markets", "Pazarlar", "globe"), ("/tools", "Keşfet", "search"), ("/settings", "Ayarlar", "sliders")]
+           ("/markets", "Pazarlar", "globe"), ("/tools", "Firma bul", "search"), ("/settings", "Ayarlar", "sliders")]
     links = "".join(
         f'<a href="{u}" class="{"on" if u == active else ""}">{icon(i)}{n}'
         f'{f"<span class=cnt>{due}</span>" if u == "/" and due else ""}</a>' for u, n, i in nav)
@@ -327,25 +346,106 @@ def section(title, rows, hint_fn, bad=False, kind="follow", empty_msg=""):
     return h + "</div>"
 
 
+def task_item(t, back, show_company=True):
+    d = days_from_today(t["due"])
+    when = ("bugün" if d == 0 else f"{d} gün gecikti" if d and d > 0 else f"{t['due']}") if t["due"] else ""
+    comp = f'<small><a href="/lead/{t["company_id"]}">{esc(t["name"])}</a></small>' if show_company and t["company_id"] else ""
+    return (f'<div class="tk"><form class="pl" method="post" action="/task/{t["id"]}/done"><input type="hidden" name="back" value="{esc(back)}">'
+            f'<button class="ghost sm" title="Tamamlandı">{icon("check", 14)}</button></form><div class="t">{esc(t["title"])}{comp}</div>'
+            f'<span class="sm {"late" if d and d > 0 else "muted"}">{esc(when)}</span></div>')
+
+
+def task_form(back, cid=None):
+    return (f'<form class="inline" method="post" action="/task/new" style="margin-top:10px"><input type="hidden" name="back" value="{esc(back)}">'
+            f'{f"<input type=hidden name=cid value={cid}>" if cid else ""}<input name="title" required placeholder="Ör. fiyat listesini gönder, spec sheet iste…" style="flex:1;min-width:220px">'
+            f'<input type="date" name="due" value="{leads.today()}"><button class="ghost">{icon("plus", 14)} Görev ekle</button></form>')
+
+
+def deal_rows(rows, back, show_company=True):
+    """Teklif / numune tablosu (açıklar için Kabul/Red düğmeleriyle)."""
+    if not rows:
+        return ""
+    quotes = [d for d in rows if d["kind"] == "quote"]
+    samples = [d for d in rows if d["kind"] == "sample"]
+    h = ""
+
+    def close_btns(d):
+        if d["status"] != "open":
+            lbl = leads.DEAL_OUTCOME[(d["kind"], d["status"])]
+            return f'<span class="pill" style="--c:{STATUS_COLOR["won" if d["status"] == "won" else "lost"]}">{esc(lbl)}</span>'
+        yes, no = ("Kabul", "Red") if d["kind"] == "quote" else ("Beğenildi", "Beğenilmedi")
+        f = lambda o, l, c: (f'<form class="pl" method="post" action="/deal/{d["id"]}/close"><input type="hidden" name="outcome" value="{o}">'  # noqa: E731
+                             f'<input type="hidden" name="back" value="{esc(back)}"><button class="{c} sm">{l}</button></form>')
+        return f("won", yes, "ghost") + " " + f("lost", no, "danger")
+    comp = lambda d: f'<td><a class="name" href="/lead/{d["company_id"]}">{esc(d["name"])}</a><small>{esc(cname(d["country"]))}</small></td>' if show_company else ""  # noqa: E731
+    if quotes:
+        h += (f'<div class="tw" style="margin-bottom:12px"><table class="mini"><tr>{"<th>Firma</th>" if show_company else ""}<th>Teklif</th><th>Miktar</th><th>Fiyat</th>'
+              f'<th>Toplam</th><th>Teslim</th><th>Geçerlilik</th><th></th></tr>')
+        for d in quotes:
+            left = -days_from_today(d["valid_until"]) if d["valid_until"] else None
+            vu = (f'<span class="{"late" if left is not None and left <= 2 and d["status"] == "open" else ""}">{esc(d["valid_until"])}'
+                  f'{f"<small>{left} gün kaldı</small>" if left is not None and left >= 0 and d["status"] == "open" else ""}</span>') if d["valid_until"] else "—"
+            qty = f"{d['qty_t']:g} t" if d["qty_t"] else "—"
+            price = f"{d['price_kg']:g} {esc(d['currency'])}/kg" if d["price_kg"] else "—"
+            h += (f'<tr>{comp(d)}<td>{esc(d["product"] or "—")}<small>{esc(d["created_at"][:10])}</small></td><td>{qty}</td><td>{price}</td>'
+                  f'<td><b>{money(leads.deal_total_usd(d))}</b></td><td>{esc(d["incoterm"] or "—")}</td><td>{vu}</td><td>{close_btns(d)}</td></tr>')
+        h += "</table></div>"
+    if samples:
+        h += (f'<div class="tw"><table class="mini"><tr>{"<th>Firma</th>" if show_company else ""}<th>Numune</th><th>Kargo takip</th><th>Gönderildi</th><th></th></tr>')
+        for d in samples:
+            age = days_from_today(d["created_at"])
+            note = f"<small>{esc(d['note'])}</small>" if d["note"] else ""
+            late = "late" if age and age >= 10 and d["status"] == "open" else ""
+            h += (f'<tr>{comp(d)}<td>{esc(d["product"] or "—")}{note}</td><td>{esc(d["tracking"] or "—")}</td>'
+                  f'<td>{esc(d["created_at"][:10])}<small class="{late}">{ago(d["created_at"])}</small></td><td>{close_btns(d)}</td></tr>')
+        h += "</table></div>"
+    return h
+
+
+def deal_forms(cid, back):
+    prod = opts([(x, x) for x in leads.DEAL_PRODUCTS])
+    inc = opts([(x, x) for x in leads.INCOTERMS], "FOB")
+    valid = (dt.date.today() + dt.timedelta(days=14)).isoformat()
+    return (f'<details class="box"><summary>{icon("file", 14)} Teklif ver</summary><form method="post" action="/lead/{cid}/deal" class="grid" style="gap:10px;margin-top:10px">'
+            f'<input type="hidden" name="kind" value="quote"><input type="hidden" name="back" value="{esc(back)}">'
+            f'<div class="row2"><div><label>Ürün</label><select name="product" style="width:100%">{prod}</select></div>'
+            f'<div><label>Miktar (ton)</label><input name="qty_t" placeholder="ör. 20" style="width:100%"></div></div>'
+            f'<div class="row2"><div><label>Fiyat (/kg)</label><input name="price_kg" placeholder="ör. 8,40" style="width:100%"></div>'
+            f'<div><label>Para birimi</label><select name="currency" style="width:100%">{opts([("USD", "USD $"), ("EUR", "EUR €"), ("GBP", "GBP £")], "USD")}</select></div></div>'
+            f'<div class="row2"><div><label>Teslim şekli</label><select name="incoterm" style="width:100%">{inc}</select></div>'
+            f'<div><label>Geçerlilik</label><input type="date" name="valid_until" value="{valid}" style="width:100%"></div></div>'
+            f'<div><label>Not</label><input name="note" placeholder="ödeme şekli, ambalaj, teslim süresi…" style="width:100%"></div>'
+            f'<div class="actions"><button>{icon("file", 14)} Teklifi kaydet</button><span class="muted sm">Durum Pazarlık olur; geçerlilik bitmeden 2 gün önce hatırlatılır.</span></div></form></details>'
+            f'<details class="box"><summary>{icon("box", 14)} Numune gönder</summary><form method="post" action="/lead/{cid}/deal" class="grid" style="gap:10px;margin-top:10px">'
+            f'<input type="hidden" name="kind" value="sample"><input type="hidden" name="back" value="{esc(back)}">'
+            f'<div class="row2"><div><label>Ürün</label><select name="product" style="width:100%">{prod}</select></div>'
+            f'<div><label>Kargo takip no</label><input name="tracking" placeholder="DHL / UPS no" style="width:100%"></div></div>'
+            f'<div><label>Not</label><input name="note" placeholder="ör. 2 x 1 kg alkalize %10-12" style="width:100%"></div>'
+            f'<div class="actions"><button>{icon("box", 14)} Numuneyi kaydet</button><span class="muted sm">10 gün sonra "beğendiniz mi?" takibi kurulur.</span></div></form></details>')
+
+
 def page_today(con, q):
     td = leads.today()
     n = lambda sql, *p: con.execute(sql, p).fetchone()[0]  # noqa: E731
-    total = n("SELECT COUNT(*) FROM companies")
-    emails = n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE email_ok=1")
+    total = n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0")
+    emails = n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE email_ok=1 AND company_id IN (SELECT id FROM companies WHERE IFNULL(archived,0)=0)")
     has_market = n("SELECT COUNT(*) FROM trade_flows") > 0
     sent = n("SELECT COUNT(*) FROM activities WHERE kind='email'")
-    h = head("Bugün", dt.date.today().strftime("%d.%m.%Y") + " — kimseyi kaçırma: önce gecikenler, sonra bugünküler.",
+    h = head("Bugün", dt.date.today().strftime("%d.%m.%Y") + " — sıra şu: geciken takipler, teklif ve numuneler, sonra yeni alıcılara yaz.",
              f'<a class="btn ghost" href="/add">{icon("plus")} Firma ekle</a><a class="btn" href="/tools">{icon("search")} Firma bul</a>')
+    if "ADINIZ" in (leads.config().get("sender_name") or "ADINIZ"):
+        h += ('<div class="warnbar"><b>E-posta imzan eksik.</b> Taslaklarda "ADINIZ SOYADINIZ" yazıyor. '
+              '<a href="/settings">Ayarlar → Firma ve imza bilgileri</a> bölümünden adını, telefonunu ve sertifikalarını gir.</div>')
     n_opps = len(leads.opportunity_rows(con, None, 55))
     steps = [(total > 0, "/tools", "Otopilotu çalıştır"), (n_opps > 0, "/firsatlar", "Fırsatlara bak"), (sent > 0, "/firsatlar?ready=1", "İlk maili gönder")]
     if not all(s[0] for s in steps):
         h += '<div class="banner"><b>Başlangıç</b>' + "".join(
             f'<a class="st {"done" if d else ""}" href="{u}"><b>{icon("check", 11) if d else i}</b>{t}</a>' for i, (d, u, t) in enumerate(steps, 1)) + "</div>"
-    pipe = n("SELECT IFNULL(SUM(value_usd),0) FROM companies WHERE status IN ('contacted','replied','sample','negotiation')")
+    pipe = n("SELECT IFNULL(SUM(value_usd),0) FROM companies WHERE status IN ('contacted','replied','sample','negotiation') AND IFNULL(archived,0)=0")
     won, lost = n("SELECT COUNT(*) FROM companies WHERE status='won'"), n("SELECT COUNT(*) FROM companies WHERE status='lost'")
     h += ('<div class="stats">' +
           "".join(f'<div class="stat"><b>{v}</b><span>{k}</span></div>' for k, v in [
-              ("Toplam firma", total), ("E-postası olan", emails), ("Süreçte", n("SELECT COUNT(*) FROM companies WHERE status IN ('contacted','replied','sample','negotiation')")),
+              ("Aktif firma", total), ("E-postası olan", emails), ("Süreçte", n("SELECT COUNT(*) FROM companies WHERE status IN ('contacted','replied','sample','negotiation')")),
               ("Açık fırsat değeri", money(pipe)), ("Kazanılan", won), ("Kazanma oranı", f"%{100 * won // (won + lost)}" if won + lost else "—")]) + "</div>")
     base = "SELECT c.*, (SELECT 1 FROM contacts k WHERE k.company_id=c.id AND k.email_ok=1 LIMIT 1) has_email FROM companies c "
     overdue = con.execute(base + "WHERE next_followup<? AND status NOT IN ('won','lost') ORDER BY next_followup, score DESC", (td,)).fetchall()
@@ -356,9 +456,29 @@ def page_today(con, q):
     taken |= {r["id"] for r in waiting}
     cooling = [r for r in con.execute(base + "WHERE status='contacted' ORDER BY last_contacted", ()).fetchall()
                if r["id"] not in taken and (days_from_today(r["last_contacted"]) or 0) >= 14]
-    fresh = con.execute(base + "WHERE status='new' AND id IN (SELECT company_id FROM contacts WHERE email_ok=1) ORDER BY score DESC LIMIT 10").fetchall()
+    fresh = con.execute(base + "WHERE status='new' AND IFNULL(archived,0)=0 AND id IN (SELECT company_id FROM contacts WHERE email_ok=1) "
+                              "ORDER BY (evidence IS NOT NULL) DESC, score DESC LIMIT 10").fetchall()
+    tasks = leads.open_tasks(con)
+    tasks_due = [t for t in tasks if (t["due"] or td) <= td]
+    quotes, samples = leads.open_deals(con, "quote"), leads.open_deals(con, "sample")
+    expiring = [d for d in quotes if d["valid_until"] and (days_from_today(d["valid_until"]) or 0) >= -3]
+    fb_wait = [d for d in samples if (days_from_today(d["created_at"]) or 0) >= 7]
+    n_evid = n("SELECT COUNT(*) FROM companies WHERE status='new' AND IFNULL(archived,0)=0 AND evidence IS NOT NULL AND score>=55")
+    plan = [(len(overdue) + len(today_rows), "takip", "geciken + bugünkü", "#takip", bool(overdue)),
+            (len(tasks_due), "görev", "bugün yapılacak", "#gorev", any((days_from_today(t["due"]) or 0) > 0 for t in tasks_due)),
+            (len(expiring), "teklif", "süresi 3 gün içinde doluyor", "/pipeline#teklif", bool(expiring)),
+            (len(fb_wait), "numune", "7+ gündür geri bildirim yok", "/pipeline#teklif", bool(fb_wait)),
+            (n_evid, "kanıtlı alıcı", "ürününde kakao var, henüz yazılmadı", "/firsatlar?kanit=1", False)]
+    h += '<div class="plan">' + "".join(
+        f'<a href="{u}" class="{"bad" if bad and k else ""}{" zero" if not k else ""}"><b>{k}</b><span>{t}<small>{d}</small></span></a>' for k, t, d, u, bad in plan) + "</div>"
+    h += '<div id="takip"></div>'
     h += section("Geciken takipler", overdue, lambda r: f"{days_from_today(r['next_followup'])} gün gecikti", bad=True)
     h += section("Bugün yapılacaklar", today_rows, lambda r: "Takip günü bugün", empty_msg="Bugün için planlı takip yok." if not overdue else "")
+    h += (f'<div class="sec" id="gorev"><div class="sh"><h2>Görevlerim</h2><span class="count{" bad" if tasks_due else ""}">{len(tasks)}</span></div><div class="card">'
+          + ("".join(task_item(t, "/") for t in tasks[:15]) or '<p class="muted" style="margin:0">Açık görev yok.</p>') + task_form("/") + "</div></div>")
+    if expiring or fb_wait:
+        h += ('<div class="sec"><div class="sh"><h2>Teklif ve numuneler</h2><span class="count bad">' + str(len(expiring) + len(fb_wait)) + '</span></div>'
+              + deal_rows(expiring + fb_wait, "/") + "</div>")
     h += section("Cevap bekleyen sıcak müşteriler", waiting, lambda r: f"Son temas {ago(r['last_contacted'])} — dönüş yapılmalı", bad=True)
     h += section("Soğuyan müşteriler", cooling, lambda r: f"{days_from_today(r['last_contacted'])} gündür ses yok", bad=True)
     h += section("Yazılmayı bekleyen en iyi firmalar", fresh, lambda r: f"Puan {r['score']} · e-postası var", kind="new",
@@ -371,9 +491,9 @@ def page_today(con, q):
 # ------------------------------------------------------------------ Satış hattı
 def page_pipeline(con, q):
     n = lambda sql, *p: con.execute(sql, p).fetchone()[0]  # noqa: E731
-    total = n("SELECT COUNT(*) FROM companies")
-    counts = {st: n("SELECT COUNT(*) FROM companies WHERE status=?", st) for st in STATUSES}
-    vals = {st: n("SELECT IFNULL(SUM(value_usd),0) FROM companies WHERE status=?", st) for st in STATUSES}
+    total = n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0")
+    counts = {st: n("SELECT COUNT(*) FROM companies WHERE status=? AND IFNULL(archived,0)=0", st) for st in STATUSES}
+    vals = {st: n("SELECT IFNULL(SUM(value_usd),0) FROM companies WHERE status=? AND IFNULL(archived,0)=0", st) for st in STATUSES}
     h = head("Satış hattı", "Kartı sürükleyip başka sütuna bırakarak durumunu değiştir.")
     if not total:
         return "Satış hattı", h + '<div class="card empty">Henüz firma yok. <a href="/tools">Firma bul</a> ile başla.</div>', "/pipeline"
@@ -381,7 +501,7 @@ def page_pipeline(con, q):
     lg = "".join(f'<span style="--c:{STATUS_COLOR[s]}">{STATUS_TR[s]} <b>{counts[s]}</b></span>' for s in STATUSES if counts[s])
     h += f'<div class="card" style="margin-bottom:18px"><div class="funnel">{bar}</div><div class="legend">{lg}</div></div><div class="kanban">'
     for st in ["new", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]:
-        rows = con.execute("SELECT * FROM companies WHERE status=? ORDER BY starred DESC, score DESC LIMIT 25", (st,)).fetchall()
+        rows = con.execute("SELECT * FROM companies WHERE status=? AND IFNULL(archived,0)=0 ORDER BY starred DESC, score DESC LIMIT 25", (st,)).fetchall()
         h += (f'<div class="col" data-status="{st}" style="--c:{STATUS_COLOR[st]}"><h4>{STATUS_TR[st]}'
               f'<span>{counts[st]}{" · " + money(vals[st]) if vals[st] else ""}</span></h4>')
         for r in rows:
@@ -393,6 +513,13 @@ def page_pipeline(con, q):
         if counts[st] > len(rows):
             h += f'<a href="/leads?status={st}">+{counts[st] - len(rows)} daha…</a>'
         h += "</div>"
+    h += "</div>"
+    od = leads.open_deals(con)
+    tons = sum(d["qty_t"] or 0 for d in od if d["kind"] == "quote")
+    tot_usd = sum(leads.deal_total_usd(d) for d in od if d["kind"] == "quote")
+    h += (f'<div class="sec" id="teklif" style="margin-top:22px"><div class="sh"><h2>Açık teklifler ve yoldaki numuneler</h2><span class="count">{len(od)}</span>'
+          f'<span class="muted sm">{f"{tons:g} ton · {money(tot_usd)} teklifte" if tons else ""}</span></div>')
+    h += deal_rows(od, "/pipeline") or '<div class="card flat muted">Açık teklif ya da numune yok. Firma sayfasındaki <b>Teklif ver</b> / <b>Numune gönder</b> ile kaydet.</div>'
     return "Satış hattı", h + "</div>", "/pipeline"
 
 
@@ -430,6 +557,9 @@ def page_leads(con, q):
         w.append("id IN (SELECT company_id FROM contacts WHERE dept IN ('purchasing','export','sales'))")
     if g("starred"):
         w.append("starred=1")
+    if g("kanit"):
+        w.append("evidence IS NOT NULL")
+    w.append("IFNULL(archived,0)=" + ("1" if g("arsiv") else "0"))
     where = " AND ".join(w)
     sort = g("sort") if g("sort") in SORTS else "score"
     dr = "ASC" if g("dir") == "asc" else "DESC"
@@ -445,7 +575,11 @@ def page_leads(con, q):
     ctry.sort(key=lambda c: tr_key(cname(c)))
     actions = (f'<a class="btn ghost" href="/import">{icon("upload")} Liste yükle</a><a class="btn ghost" href="/export.csv">{icon("download")} Firmalar</a><a class="btn ghost" href="/contacts.csv" title="Her satır bir kişi/e-posta: toplu posta için">{icon("download")} Kişiler</a>'
                f'<a class="btn" href="/add">{icon("plus")} Firma ekle</a>')
-    h = head("Firmalar", f"{total} firma" + (" (filtreli)" if any(g(k) for k in ("q", "status", "country", "segment", "buyer_type", "min_score", "with_email", "with_phone", "with_person", "with_buyer", "starred")) else ""), actions)
+    n_arch = con.execute("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=1").fetchone()[0]
+    sub = (f"{total} firma" + (" (filtreli)" if any(g(k) for k in ("q", "status", "country", "segment", "buyer_type", "min_score", "with_email", "with_phone", "with_person", "with_buyer", "starred", "kanit")) else ""))
+    sub += (" · <b>Arşiv</b> (uygun bulunmayanlar; geri almak için seçip toplu işlemden <i>Arşivden çıkar</i>) · <a href='/leads'>aktiflere dön</a>" if g("arsiv")
+            else f" · <a href='/leads?arsiv=1'>arşivde {n_arch}</a>" if n_arch else "")
+    h = head("Arşiv" if g("arsiv") else "Firmalar", sub, actions)
     h += f"""<form class="inline card" method="get" style="margin-bottom:14px"><div><label>Ara</label><input name="q" value="{esc(g('q'))}" placeholder="firma, site, şehir, not" style="width:200px"></div>
 <div><label>Durum</label><select name="status">{opts([(s, STATUS_TR[s]) for s in STATUSES], g('status'), 'Hepsi')}</select></div>
 <div><label>Segment</label><select name="segment">{opts(list(SEGMENT_TR.items()), g('segment'), 'Hepsi')}</select></div>
@@ -457,6 +591,8 @@ def page_leads(con, q):
 <div><label class="chip" style="margin:0"><input type="checkbox" name="with_person" value="1"{" checked" if g('with_person') else ""}> 👤 kişi adı var</label></div>
 <div><label class="chip" style="margin:0"><input type="checkbox" name="with_buyer" value="1"{" checked" if g('with_buyer') else ""}> 🎯 satın alma/ihracat/satış</label></div>
 <div><label class="chip" style="margin:0"><input type="checkbox" name="starred" value="1"{" checked" if g('starred') else ""}> ★ yıldızlı</label></div>
+<div><label class="chip" style="margin:0" title="Ürün etiketinde kakao geçen firmalar"><input type="checkbox" name="kanit" value="1"{" checked" if g('kanit') else ""}> 🍫 ürün kanıtlı</label></div>
+{f'<input type="hidden" name="arsiv" value="1">' if g('arsiv') else ''}
 <input type="hidden" name="sort" value="{esc(sort)}"><input type="hidden" name="dir" value="{dr.lower()}">
 <button>{icon('search')} Filtrele</button><a class="btn ghost" href="/leads">Temizle</a></form>"""
     if not rows:
@@ -478,7 +614,7 @@ def page_leads(con, q):
         late = nf and nf < td and r["status"] not in ("won", "lost")
         h += (f'<tr><td><input type="checkbox" class="rowchk" name="ids" value="{r["id"]}" onchange="updBulk()"></td><td>{star_btn(r["id"], r["starred"])}</td>'
               f'<td>{score_badge(r["score"])}</td><td><a class="name" href="/lead/{r["id"]}">{esc(r["name"])}</a>'
-              f'<small>{esc(r["name_gloss"]) + " · " if r["name_gloss"] else ""}{esc(leads.get_domain(r["website"]) if r["website"] else "web sitesi yok")}'
+              f'<small>{"🍫 " if r["evidence"] else ""}{esc(r["name_gloss"]) + " · " if r["name_gloss"] else ""}{esc(leads.get_domain(r["website"]) if r["website"] else "web sitesi yok")}'
               f'{" · ✉" if r["has_email"] else ""}{" · ☎" if r["phone"] else ""}{" · 👤" if r["has_person"] else ""}</small></td>'
               f'<td>{esc(cname(r["country"]))}</td><td>{SEGMENT_TR.get(r["segment"], r["segment"])}<small>{esc(BUYER_TR.get(r["buyer_type"] or "", ""))}</small></td><td>{pill(r["status"])}</td>'
               f'<td title="Veri doluluğu: iletişim bilgisi ne kadar tamam"><div class="meter" style="width:54px"><i style="width:{r["data_score"] or 0}%"></i></div><small>%{r["data_score"] or 0}</small></td>'
@@ -488,7 +624,7 @@ def page_leads(con, q):
     bulk_ops = ('<option value="">Toplu işlem seç…</option><option value="star">★ Yıldızla</option><option value="unstar">Yıldızı kaldır</option>' +
                 "".join(f'<option value="status:{s}">Durum → {STATUS_TR[s]}</option>' for s in STATUSES) +
                 "".join(f'<option value="segment:{k}">Segment → {v}</option>' for k, v in SEGMENT_TR.items()) +
-                '<option value="delete">🗑 Sil</option>')
+                '<option value="archive">🗄 Arşive kaldır</option><option value="unarchive">Arşivden çıkar</option><option value="delete">🗑 Sil</option>')
     h += (f'<div id="bulkbar"><b><span id="bulkn">0</span> firma seçili</b><select name="do">{bulk_ops}</select><button>Uygula</button></div></form>')
     if pages > 1:
         nums = [i for i in range(1, pages + 1) if i in (1, pages) or abs(i - page) <= 2]
@@ -522,6 +658,11 @@ def next_step(con, c):
 def profile_card(con, c):
     """Taramadan toplanan firma bilgileri."""
     rows = []
+    ev = leads.load_evidence(c)
+    if ev:
+        mk = ", ".join(cname(x) for x in ev.get("markets", []))
+        rows.append(("Kanıt", f'<div class="evid">🍫 <b>{esc(leads.products.evidence_text(ev))}</b>'
+                              f'{f"<br><small>Satıldığı pazar: {esc(mk)} · kaynak: ürün etiketleri (OpenFoodFacts)</small>" if mk else ""}</div>'))
     bt = c["buyer_type"] or ""
     if bt:
         cls = {"industrial": "background:#e1f1e2;color:var(--ok)", "distributor": "background:#e1f1e2;color:var(--ok)", "competitor": "background:#f7e1dd;color:var(--bad)",
@@ -584,12 +725,19 @@ def page_lead(con, cid, q):
            f'{esc(BUYER_TR.get(c["buyer_type"] or "", "")) + " · " if c["buyer_type"] else ""}kaynak: {esc(c["source"] or "-")}')
     if c["website"]:
         sub += f' · <a href="{esc(c["website"])}" target=_blank rel=noopener>{esc(leads.get_domain(c["website"]))}</a>'
+    else:
+        gq = urllib.parse.quote(f'{c["name"]} {cname(c["country"]) if c["country"] else ""}')
+        sub += f' · <a href="https://www.google.com/search?q={gq}" target=_blank rel=noopener>web sitesini Google\'da ara ↗</a>'
+    arch_form = (f'<form class="pl" method="post" action="/lead/{cid}/archive"><button class="ghost" title="Uygun değilse listelerden kaldırır; silmez">'
+                 f'{icon("archive")} {"Arşivden çıkar" if c["archived"] else "Arşivle"}</button></form>')
     status_form = (f'<form class="pl" method="post" action="/lead/{cid}/status"><input type="hidden" name="reason" value="">'
                    f'<select name="status" onchange="if(this.value===\'lost\'){{var r=prompt(\'Kaybetme nedeni (isteğe bağlı):\');this.form.reason.value=r||\'\'}}this.form.submit()">'
                    f'{opts([(s, STATUS_TR[s]) for s in STATUSES], c["status"])}</select></form>')
     del_form = (f'<form class="pl" method="post" action="/lead/{cid}/delete" onsubmit="return confirm(\'Bu firma kişileri ve geçmişiyle birlikte silinecek '
                 f've sonraki taramalarda tekrar eklenmeyecek. Silinsin mi?\')"><button class="danger">{icon("trash")} Sil</button></form>')
-    h = head(f'{star_btn(cid, c["starred"])} {esc(c["name"])} {score_badge(c["score"])}', sub, status_form + del_form)
+    h = head(f'{star_btn(cid, c["starred"])} {esc(c["name"])} {score_badge(c["score"])}', sub, status_form + arch_form + del_form)
+    if c["archived"]:
+        h += '<div class="warnbar">Bu firma <b>arşivde</b>: Bugün, Fırsatlar ve Satış hattında görünmez. Yanlışsa sağ üstten <b>Arşivden çıkar</b>.</div>'
     h += "<div class='grid two'><div>"
     # sonraki adım + hızlı işlemler
     nf = c["next_followup"]
@@ -602,6 +750,13 @@ def page_lead(con, cid, q):
           + quick_form(cid, "snooze", "3 gün ertele", "clock", back, "ghost") + "</div>")
     h += (f'<p class="muted sm" style="margin:12px 0 0">Son temas: <b>{esc(ago(c["last_contacted"]))}</b> · Sonraki takip: '
           f'<b class="{"late" if late else ""}">{esc(nf or "planlı değil")}</b> · Gönderilen e-posta: <b>{leads.email_count(con, cid)}</b></p></div>')
+    # teklif & numune + görevler
+    deals = con.execute("SELECT d.*, c.name, c.country FROM deals d JOIN companies c ON c.id=d.company_id WHERE d.company_id=? ORDER BY d.status='open' DESC, d.id DESC", (cid,)).fetchall()
+    h += (f'<div class="card" style="margin-bottom:16px"><h3>Teklif ve numune</h3>{deal_rows(deals, back, False) or "<p class=muted style=margin:0>Henüz teklif ya da numune yok.</p>"}'
+          f'{deal_forms(cid, back)}</div>')
+    tks = leads.open_tasks(con, cid)
+    h += (f'<div class="card" style="margin-bottom:16px"><h3>Görevler</h3>' + ("".join(task_item(t, back, False) for t in tks) or '<p class="muted" style="margin:0">Açık görev yok.</p>')
+          + task_form(back, cid) + "</div>")
     # firma profili (taramadan gelen veriler)
     h += profile_card(con, c)
     # kişiler
@@ -689,7 +844,9 @@ def opp_card(r):
     cid = r["id"]
     ct = r["contact"]
     gloss = r["name_gloss"] or (r["name_latin"] if r["name_latin"] and r["name_latin"] != r["name"] else "")
-    chips = "".join(f"<span>{esc(x)}</span>" for x in r["reasons"][:6])
+    chips = "".join(f"<span>{esc(x)}</span>" for x in [x for x in r["reasons"] if not x.startswith("Kanıt:")][:6])
+    ev = leads.load_evidence(r)
+    evid = f'<div class="evid">🍫 {esc(leads.products.evidence_text(ev))}</div>' if ev else ""
     parts = []
     if ct["person"]:
         parts.append(f'<b>{esc(ct["person"])}</b> <span class="muted">{esc(ct["role"] or DEPT_TR.get(ct["dept"] or "", ""))}</span>')
@@ -714,7 +871,7 @@ def opp_card(r):
             + quick_form(cid, "skip", "Uygun değil", "x", "/firsatlar", "ghost sm", "Listeden çıkar"))
     return (f'<div class="opp"><div class="top"><div class="big {cls}" title="Alıcı uygunluğu (0-100)">{r["score"]}</div><div style="flex:1;min-width:0">'
             f'<h3><a href="/lead/{cid}">{esc(r["name"])}</a></h3><div class="sub">{gl}{esc(cname(r["country"]))}{site}</div></div>{star_btn(cid, r["starred"])}</div>'
-            f'<div class="sum">{esc(r["summary_tr"] or "")}</div><div class="chips2">{chips}</div>{offer}{desc}'
+            f'<div class="sum">{esc(r["summary_tr"] or "")}</div>{evid}<div class="chips2">{chips}</div>{offer}{desc}'
             f'<div class="ct">{contact}</div><div class="acts">{acts}</div></div>')
 
 
@@ -723,6 +880,8 @@ def page_opps(con, q):
     min_score = int(g("min")) if g("min").isdigit() else 55
     btype, cc, ready = g("type"), g("country").upper(), bool(g("ready"))
     base = leads.opportunity_rows(con, None, min_score, btype or None, ready)
+    if g("kanit"):
+        base = [r for r in base if r["evidence"]]
     by_cc = {}
     for r in base:
         by_cc.setdefault(r["country"] or "", []).append(r)
@@ -737,12 +896,13 @@ def page_opps(con, q):
     h += f"""<form class="inline card" method="get" style="margin-bottom:14px"><div><label>Ülke</label><select name="country">{opts([(c, f"{cname(c)} ({len(by_cc[c])})") for c in ctry if c], cc, 'Hepsi')}</select></div>
 <div><label>Alıcı tipi</label><select name="type">{opts([("industrial", "Kakao kullanan üretici"), ("distributor", "Toptancı / distribütör")], btype, 'Hepsi')}</select></div>
 <div><label>Min. uygunluk</label><select name="min">{opts([(str(x), f"{x}+") for x in (40, 50, 55, 60, 70, 80)], str(min_score))}</select></div>
-<div><label class="chip" style="margin:0"><input type="checkbox" name="ready" value="1"{" checked" if ready else ""}> ✉ e-postası hazır</label></div><button>{icon('search')} Göster</button></form>"""
+<div><label class="chip" style="margin:0"><input type="checkbox" name="ready" value="1"{" checked" if ready else ""}> ✉ e-postası hazır</label></div>
+<div><label class="chip" style="margin:0" title="Ürün etiketinde kakao tozu/yağı geçen firmalar"><input type="checkbox" name="kanit" value="1"{" checked" if g("kanit") else ""}> 🍫 ürün kanıtlı</label></div><button>{icon('search')} Göster</button></form>"""
     h += ('<div class="stats">' + "".join(f'<div class="stat"><b>{v}</b><span>{k}</span></div>' for k, v in [
         ("Fırsat", len(rows)), ("E-postası hazır", n_ready), ("Kişi adı bulunan", n_person), ("Ülke", len({r["country"] for r in rows})),
         ("Taranmayı bekleyen firma", pending)]) + "</div>")
     if not rows:
-        msg = ("Henüz fırsat yok. <b>Keşfet</b> sayfasından <b>Otopilot</b>'u çalıştırın: hazır alıcı listesini yükler, siteleri tarar, puanlar ve burada sıralar."
+        msg = ("Henüz fırsat yok. <b>Firma bul</b> sayfasından <b>Otopilot</b>'u çalıştırın: hazır alıcı listesini yükler, siteleri tarar, puanlar ve burada sıralar."
                if not pending else f"Filtreye uyan fırsat yok. {pending} firmanın sitesi henüz taranmadı: <a href='/tools'>Keşfet</a> sayfasında derin taramayı çalıştırın ya da minimum uygunluğu düşürün.")
         return "Fırsatlar", h + f'<div class="card empty">{msg}</div>', "/firsatlar"
     groups = {c: by_cc[c] for c in ctry} if not cc else {cc: rows}
@@ -765,7 +925,17 @@ def page_settings(con, q):
                 f'<form class="inline" method="post" action="/settings"><input name="{key}" type="{"password" if secret else "text"}" placeholder="yeni değer yapıştırın" style="width:360px" autocomplete="off">'
                 f'<button class="ghost sm">Kaydet</button></form><small class="muted">{hint}</small></div>')
     prov = leads.discover.provider()
+    cfg = leads.config()
+    fld = lambda k, l, ph="": (f'<div><label>{l}</label><input name="{k}" value="{esc(str(cfg.get(k) or ""))}" placeholder="{esc(ph)}" style="width:100%"></div>')  # noqa: E731
+    company = (f'<form class="card" method="post" action="/settings" style="margin-bottom:16px"><input type="hidden" name="company" value="1"><h3>Firma ve imza bilgileri</h3>'
+               f'<p class="muted" style="margin-top:0">E-posta taslaklarına bu bilgiler girer. Ad-soyad ve telefon gerçek olmazsa alıcı cevap vermez.</p>'
+               f'<div class="row2">{fld("sender_name", "Adın soyadın", "Umut Ülger")}{fld("sender_title", "Unvan", "Export Manager")}</div>'
+               f'<div class="row2">{fld("sender_email", "E-posta", "export@imestafood.com")}{fld("sender_phone", "Telefon / WhatsApp", "+90 5xx xxx xx xx")}</div>'
+               f'<div class="row2">{fld("company_name", "Firma adı")}{fld("website", "Web sitesi")}</div>'
+               f'{fld("products", "Ürünler (İngilizce, e-postada geçer)")}{fld("certifications", "Sertifikalar (İngilizce)", "ISO 22000, Halal, Kosher")}'
+               f'{fld("postal_address", "Posta adresi (e-posta altına yasal zorunluluk)")}<br><button>Kaydet</button></form>')
     h = head("Ayarlar", "İsteğe bağlı ücretsiz servisler: ne kadar çok tanımlarsan sistem o kadar çok firma bulur ve o kadar iyi çevirir. Anahtarlar bu bilgisayarda <code>secrets.json</code> dosyasında saklanır.")
+    h += company
     h += f'<div class="card" style="margin-bottom:16px"><h3>1 · Arama motoru (Google\'a yazmanın otomatiği) {"✔ " + prov if prov else ""}</h3>'
     h += ('<p class="muted" style="margin-top:0">Ülke × sektör × yerel dilde yüzlerce arama yapar ("Keks Hersteller Deutschland", "fabricant biscuits France"...) ve çıkan firma sitelerini aday olarak alır. '
           'Arama sonuç sayfalarını kazımaz; resmî API kullanır. <b>Birini</b> tanımlamanız yeterli.</p>')
@@ -819,17 +989,17 @@ def page_markets(con, q):
 def coverage(con):
     """Firmaların yüzde kaçında hangi veri var?"""
     n = lambda sql: con.execute(sql).fetchone()[0]  # noqa: E731
-    tot = n("SELECT COUNT(*) FROM companies")
+    tot = n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0")
     if not tot:
         return tot, []
-    items = [("Web sitesi", n("SELECT COUNT(*) FROM companies WHERE website IS NOT NULL AND website<>''")),
-             ("E-posta", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE email_ok=1")),
-             ("Telefon", n("SELECT COUNT(*) FROM companies c WHERE (phone IS NOT NULL AND phone<>'') OR EXISTS(SELECT 1 FROM contacts k WHERE k.company_id=c.id AND k.phone IS NOT NULL)")),
-             ("Kişi adı", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE name IS NOT NULL AND name<>''")),
-             ("Satın alma/ihracat/satış", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE dept IN ('purchasing','export','sales')")),
-             ("Adres", n("SELECT COUNT(*) FROM companies WHERE address IS NOT NULL AND address<>''")),
-             ("Sosyal medya", n("SELECT COUNT(*) FROM companies WHERE linkedin IS NOT NULL OR facebook IS NOT NULL OR instagram IS NOT NULL OR twitter IS NOT NULL")),
-             ("Taranmış site", n("SELECT COUNT(*) FROM companies WHERE enrich_v>=2 AND enrich_error IS NULL"))]
+    items = [("Web sitesi", n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND website IS NOT NULL AND website<>''")),
+             ("E-posta", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE company_id IN (SELECT id FROM companies WHERE IFNULL(archived,0)=0) AND email_ok=1")),
+             ("Telefon", n("SELECT COUNT(*) FROM companies c WHERE IFNULL(archived,0)=0 AND ((phone IS NOT NULL AND phone<>'') OR EXISTS(SELECT 1 FROM contacts k WHERE k.company_id=c.id AND k.phone IS NOT NULL))")),
+             ("Kişi adı", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE company_id IN (SELECT id FROM companies WHERE IFNULL(archived,0)=0) AND name IS NOT NULL AND name<>''")),
+             ("Satın alma/ihracat/satış", n("SELECT COUNT(DISTINCT company_id) FROM contacts WHERE company_id IN (SELECT id FROM companies WHERE IFNULL(archived,0)=0) AND dept IN ('purchasing','export','sales')")),
+             ("Adres", n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND address IS NOT NULL AND address<>''")),
+             ("Sosyal medya", n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND (linkedin IS NOT NULL OR facebook IS NOT NULL OR instagram IS NOT NULL OR twitter IS NOT NULL)")),
+             ("Taranmış site", n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND enrich_v>=2 AND enrich_error IS NULL"))]
     return tot, items
 
 
@@ -848,7 +1018,9 @@ def page_tools(con, q):
         status += f'<details {"open" if JOB["running"] else ""}><summary>Ayrıntılı kayıt</summary><pre class="mail">{esc(JOB["log"])}</pre></details><br>'
     has_market = con.execute("SELECT COUNT(*) FROM trade_flows").fetchone()[0] > 0
     tot, cov = coverage(con)
-    pending = con.execute("SELECT COUNT(*) FROM companies WHERE website IS NOT NULL AND website<>'' AND IFNULL(enrich_v,0)<2").fetchone()[0]
+    pending = con.execute("SELECT COUNT(*) FROM companies WHERE website IS NOT NULL AND website<>'' AND IFNULL(enrich_v,0)<2 AND IFNULL(archived,0)=0").fetchone()[0]
+    junk = leads.archive_candidates(con)
+    n_junk = sum(k for _, k in junk)
     cov_html = ""
     if tot:
         cov_html = (f'<div class="card" style="margin-bottom:16px"><h3>Veri durumu <span class="muted sm">({tot} firma)</span></h3><div class="cover">' +
@@ -857,14 +1029,25 @@ def page_tools(con, q):
     dis = "disabled" if JOB["running"] else ""
     prov = leads.discover.provider()
     disc_note = (f"✔ {prov} anahtarı tanımlı." if prov else 'Önce <a href="/settings">Ayarlar</a> sayfasından ücretsiz bir arama anahtarı ekleyin.')
-    h = head("Keşfet", "Alıcıları otomatik bul, tara ve sırala. Sonuç: Fırsatlar sayfası.") + status + cov_html
+    h = head("Firma bul", "Kakao alan firmaları otomatik bul, tara ve sırala. Sonuç: Fırsatlar sayfası.") + status + cov_html
+    if n_junk:
+        h += (f'<form class="warnbar" method="post" action="/job/cleanup" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:260px">'
+              f'<b>{n_junk} firma alıcı değil</b> gibi görünüyor: ' + ", ".join(f"{esc(l)} ({k})" for l, k in junk if k) +
+              '. Silinmez, arşive kalkar; listeler sadeleşir.</div><button class="alt" ' + dis + f'>{icon("archive")} Arşive kaldır</button></form>')
     h += f"""<div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(320px,1fr))">
 <form class="card tool" method="post" action="/job/find" style="grid-column:1/-1;border-color:var(--accent)"><span class="no">OTOPİLOT · ÖNERİLEN</span><h3>Alıcıları bul, tara, puanla, çevir: tek tıkla</h3>
-<p class="muted" style="margin:0">Seçtiğin ülkeler için sırayla: <b>(1)</b> bilinen kakao kullanıcılarının hazır listesi, <b>(2)</b> arama motoru keşfi (yerel dillerde, anahtar varsa), <b>(3)</b> harita verisinden bisküvi/dondurma/süt sanayi ve toptancılar,
-<b>(4)</b> Wikidata'dan bilinen firmalar, <b>(5)</b> sitelerin derin taraması (iletişim, kişiler, firma tipi: <i>alıcı mı, rakip mi, dükkân mı?</i>), <b>(6)</b> puanlama, firma adı/özet çevirisi.
+<p class="muted" style="margin:0">Bir ihracatçı gibi düşünür: <i>"Kim kakao alıyor?"</i> Seçtiğin ülkeler için sırayla: <b>(1)</b> bilinen kakao kullanıcılarının hazır listesi,
+<b>(2)</b> <b>ürün kanıtı</b>: o ülkede satılan ürünlerin etiketinde kakao tozu/yağı geçen markalar (market markaları ve dev gruplar elenir), <b>(3)</b> arama motoru (anahtar varsa),
+<b>(4)</b> harita verisinden bisküvi/dondurma/süt sanayi ve toptancılar, <b>(5)</b> Wikidata, <b>(6)</b> sitelerin derin taraması (iletişim, kişiler, firma tipi: <i>alıcı mı, rakip mi, dükkân mı?</i>),
+<b>(7)</b> puanlama ve çeviri, <b>(8)</b> dükkân/kafe/rakip gibi alıcı olmayanları arşive kaldırma.
 Sonunda <a href="/firsatlar"><b>Fırsatlar</b></a> sayfasında ülke ülke sıralı, gerekçeli, iletişimi hazır liste çıkar. Ülke başına 5–15 dakika sürer; ilk denemede 2–3 ülke seç.</p>
 {country_chips(DEFAULT_FIND[:3])}<div><button {dis}>{icon('zap')} Otopilotu çalıştır</button></div></form>
 <div style="grid-column:1/-1"><h3 style="margin:8px 0 0">Tek tek adımlar</h3><p class="muted sm" style="margin:2px 0 0">Otopilot hepsini sırayla yapar; istersen tek bir adımı ayrı çalıştırabilirsin.</p></div>
+<form class="card tool" method="post" action="/job/products" style="border-color:#cfe6d0"><span class="no">ÜRÜN KANITI · EN İSABETLİ</span><h3>Ürününde kakao olan markaları bul</h3>
+<p class="muted" style="margin:0">Açık ürün veritabanında (OpenFoodFacts) seçtiğin ülkede satılan, etiketinde <b>kakao tozu / kakao yağı</b> yazan ürünleri tarar ve markalarını firma olarak ekler.
+Her firmaya "12 ürününde kakao tozu var, ör. …" kanıtı yazılır, e-posta taslağı bu ürünle başlar. Ardından sitelerinden e-posta/telefon/kişi toplanır.
+Ücretsiz, anahtar gerekmez; 3 ülke ~15–20 dakika.</p>
+<div class="actions"><div><label>Ülkeler (ISO)</label><input name="country" value="DE,NL,PL" style="width:150px"></div><button {dis}>{icon('search')} Kanıtlı alıcıları bul</button></div></form>
 <form class="card tool" method="post" action="/job/discover"><span class="no">ARAMA MOTORU</span><h3>Google gibi ara, yeni firma bul</h3>
 <p class="muted" style="margin:0">Ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur. {disc_note}</p>
 <div class="actions"><div><label>Ülkeler (ISO)</label><input name="country" value="DE,NL,FR" style="width:150px"></div><div><label>En çok sorgu</label><input name="max_queries" value="40" style="width:70px"></div>
@@ -894,7 +1077,7 @@ yönetici adları, sosyal medya, adres, vergi no ve kakao ilgisini kaydeder. rob
 sayfalardan (iletişim, impressum, ekip) gelir. Siteler robots.txt'e uygun ve yavaş taranır; LinkedIn gibi giriş gerektiren ya da taramayı yasaklayan platformlardan veri çekilmez.
 Yönetici adları Almanya/Avusturya/İsviçre'de yasal zorunluluk olan Impressum sayfalarından gelir. <b>Tahmin</b> işaretli e-postalar sitedeki ad.soyad kalıbından türetilir; göndermeden önce doğrulayın.
 Büyük fabrikalar için fuar listelerini <a href="/import">Liste yükle</a> sayfasından ekleyebilirsin.</p></details>"""
-    return "Keşfet", h, "/tools"
+    return "Firma bul", h, "/tools"
 
 
 # ------------------------------------------------------------------ iş yürütme
@@ -942,13 +1125,15 @@ def autopilot(countries):
     c = leads.db()
     has_seed = c.execute("SELECT COUNT(*) FROM companies WHERE source='seed'").fetchone()[0] > 0
     c.close()
-    steps = [("1/6 Hazır alıcı listesi (bilinen kakao kullanıcıları)", lambda: leads.cmd_seed(argparse.Namespace()) if not has_seed else log("  zaten yüklü")),
-             ("2/6 Arama motoru keşfi (yerel dillerde)", lambda: leads.cmd_discover(argparse.Namespace(country=cc, segments="", max_queries=60)) if leads.discover.provider()
+    steps = [("1/8 Hazır alıcı listesi (bilinen kakao kullanıcıları)", lambda: leads.cmd_seed(argparse.Namespace()) if not has_seed else log("  zaten yüklü")),
+             ("2/8 Ürün kanıtı: etiketinde kakao geçen markalar", lambda: leads.cmd_harvest_products(argparse.Namespace(country=cc, pages=8))),
+             ("3/8 Arama motoru keşfi (yerel dillerde)", lambda: leads.cmd_discover(argparse.Namespace(country=cc, segments="", max_queries=60)) if leads.discover.provider()
               else log("  atlandı: arama anahtarı yok. Ayarlar sayfasından ücretsiz anahtar eklerseniz burada Google gibi arama yapıp yeni firmalar bulurum.")),
-             ("3/6 Harita verisi (bisküvi/dondurma/süt sanayi, toptancılar)", lambda: leads.cmd_harvest_osm(argparse.Namespace(country=cc, segments=None))),
-             ("4/6 Bilinen firmalar (Wikidata)", lambda: leads.cmd_harvest_wikidata(argparse.Namespace(country=cc))),
-             ("5/6 Derin tarama: siteler, iletişim, kişiler, firma tipi", lambda: leads.cmd_enrich(argparse.Namespace(limit=300, workers=8, pages=8, force=False, countries=list(countries)))),
-             ("6/6 Puanlama ve çeviri", lambda: (leads.cmd_score(argparse.Namespace()), leads.cmd_translate(argparse.Namespace(limit=40, min_score=50))))]
+             ("4/8 Harita verisi (bisküvi/dondurma/süt sanayi, toptancılar)", lambda: leads.cmd_harvest_osm(argparse.Namespace(country=cc, segments=None))),
+             ("5/8 Bilinen firmalar (Wikidata)", lambda: leads.cmd_harvest_wikidata(argparse.Namespace(country=cc))),
+             ("6/8 Derin tarama: siteler, iletişim, kişiler, firma tipi", lambda: leads.cmd_enrich(argparse.Namespace(limit=300, workers=8, pages=8, force=False, countries=list(countries)))),
+             ("7/8 Puanlama ve çeviri", lambda: (leads.cmd_score(argparse.Namespace()), leads.cmd_translate(argparse.Namespace(limit=40, min_score=50)))),
+             ("8/8 Alıcı olmayanları arşive kaldır (dükkân, kafe, rakip)", lambda: leads.cmd_cleanup(argparse.Namespace()))]
     for title, fn in steps:
         if leads.CANCEL.is_set():
             log("Durduruldu.")
@@ -966,6 +1151,16 @@ def autopilot(countries):
 
 
 find_firms = autopilot  # eski ad
+
+
+def find_evidence_buyers(cc):
+    """Ürün kanıtlı alıcıları bul → sitelerinden iletişim topla → puanla."""
+    ccs = [c.strip().upper() for c in cc.split(",") if c.strip().upper() in COUNTRIES]
+    leads.cmd_harvest_products(argparse.Namespace(country=",".join(ccs), pages=8))
+    if not leads.CANCEL.is_set():
+        print("\n=== Bulunan firmaların sitelerinden iletişim bilgisi toplanıyor ===", flush=True)
+        leads.cmd_enrich(argparse.Namespace(limit=200, workers=8, pages=8, force=False, countries=ccs))
+    leads.cmd_score(argparse.Namespace())
 
 
 # ------------------------------------------------------------------ sunucu
@@ -1099,6 +1294,10 @@ class H(BaseHTTPRequestHandler):
         if path == "/import":
             new, dup = leads.import_csv_text(con, f.get("csv", ""), f.get("source") or "csv")
             return self._redirect("/leads", f"{new} yeni firma eklendi, {dup} tekrar/silinmiş atlandı. Puanlamak için Firma bul → Puanla.")
+        if path == "/settings" and f.get("company"):
+            keys = ("sender_name", "sender_title", "sender_email", "sender_phone", "company_name", "website", "products", "certifications", "postal_address")
+            leads.save_config({k: f[k] for k in keys if k in f})
+            return self._redirect("/settings", "Firma bilgileri kaydedildi")
         if path == "/settings":
             if f.get("clear"):
                 secrets_util.clear(f["clear"]) if f["clear"] in secrets_util.KEYS else None
@@ -1125,6 +1324,8 @@ class H(BaseHTTPRequestHandler):
                     leads.do_log(con, i, "note", f"Durum değiştirildi: {STATUS_TR[op[7:]]}", status=op[7:])
             elif op.startswith("segment:") and op[8:] in SEGMENTS:
                 con.execute(f"UPDATE companies SET segment=? WHERE id IN ({q})", [op[8:]] + ids)
+            elif op in ("archive", "unarchive"):
+                con.execute(f"UPDATE companies SET archived=? WHERE id IN ({q})", [1 if op == "archive" else 0] + ids)
             else:
                 return self._redirect(back, "Geçersiz işlem")
             con.commit()
@@ -1154,12 +1355,40 @@ class H(BaseHTTPRequestHandler):
                         limit=int(f.get("limit") or 150), workers=int(f.get("workers") or 6), pages=8, force=bool(f.get("force")))), leads.cmd_score(argparse.Namespace()))),
                     "wikidata": ("Wikidata'dan firmalar çekiliyor", lambda: (leads.cmd_harvest_wikidata(argparse.Namespace(country=f.get("country", ""))),
                                                                               leads.cmd_score(argparse.Namespace()))),
-                    "score": ("Puanlanıyor", lambda: leads.cmd_score(argparse.Namespace()))}
+                    "score": ("Puanlanıyor", lambda: leads.cmd_score(argparse.Namespace())),
+                    "products": ("Ürün kanıtı: kakaolu ürünlerin markaları bulunuyor", lambda: find_evidence_buyers(f.get("country", ""))),
+                    "cleanup": ("Alıcı olmayanlar arşive kaldırılıyor", lambda: leads.cmd_cleanup(argparse.Namespace())),
+                    "seed": ("Hazır alıcı listesi yükleniyor", lambda: (leads.cmd_seed(argparse.Namespace()), leads.cmd_score(argparse.Namespace()))),
+                    "discover": ("Arama motoruyla firma aranıyor", lambda: (leads.cmd_discover(argparse.Namespace(
+                        country=f.get("country", ""), segments="", max_queries=int(f.get("max_queries") or 40))), leads.cmd_score(argparse.Namespace()))),
+                    "translate": ("Açıklamalar çevriliyor", lambda: leads.cmd_translate(argparse.Namespace(limit=int(f.get("limit") or 40), min_score=40)))}
             if kind not in jobs:
                 return self._send(404, "yok")
             ok = run_job(*jobs[kind])
             return self._redirect("/tools", "İş başlatıldı" if ok else "Başka bir iş çalışıyor")
         parts = path.strip("/").split("/")
+        back = f.get("back") or "/"
+        if not back.startswith("/") or back.startswith("//"):
+            back = "/"
+        if path == "/task/new":
+            try:
+                cid = int(f["cid"]) if f.get("cid", "").isdigit() else None
+                leads.add_task(con, f.get("title"), f.get("due") or None, cid)
+            except ValueError as e:
+                return self._redirect(back, str(e))
+            return self._redirect(back, "Görev eklendi")
+        if len(parts) == 3 and parts[0] == "task" and parts[1].isdigit() and parts[2] == "done":
+            try:
+                leads.done_task(con, int(parts[1]))
+            except ValueError as e:
+                return self._redirect(back, str(e))
+            return self._redirect(back, "Görev tamamlandı ✔")
+        if len(parts) == 3 and parts[0] == "deal" and parts[1].isdigit() and parts[2] == "close":
+            try:
+                leads.close_deal(con, int(parts[1]), f.get("outcome"), f.get("note", ""))
+            except ValueError as e:
+                return self._redirect(back, str(e))
+            return self._redirect(back, "Kaydedildi")
         if len(parts) == 3 and parts[0] == "lead" and parts[1].isdigit():
             cid, act = int(parts[1]), parts[2]
             here = f"/lead/{cid}"
@@ -1206,6 +1435,16 @@ class H(BaseHTTPRequestHandler):
                 if not res["ok"]:
                     return self._redirect(here, "Siteye ulaşılamadı: " + (res["errors"] or ["?"])[0][:100])
                 return self._redirect(here, f"Tarandı: {st['emails']} e-posta, {st['phones']} telefon, {st['people']} kişi, {st['socials']} sosyal hesap")
+            if act == "deal":
+                kind = f.get("kind") if f.get("kind") in ("quote", "sample") else "quote"
+                cur = f.get("currency") if f.get("currency") in ("USD", "EUR", "GBP") else "USD"
+                leads.add_deal(con, cid, kind, f.get("product") or None, num(f.get("qty_t")), price_num(f.get("price_kg")), cur,
+                               f.get("incoterm") or None, f.get("valid_until") or None, f.get("tracking") or None, f.get("note") or None)
+                return self._redirect(f.get("back") or here, "Teklif kaydedildi" if kind == "quote" else "Numune kaydedildi")
+            if act == "archive":
+                con.execute("UPDATE companies SET archived=1-IFNULL(archived,0) WHERE id=?", (cid,))
+                con.commit()
+                return self._redirect(here, "Güncellendi")
             if act == "star":
                 con.execute("UPDATE companies SET starred=1-IFNULL(starred,0) WHERE id=?", (cid,))
                 con.commit()

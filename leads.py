@@ -27,6 +27,7 @@ sys.path.insert(0, HERE)
 import crawler  # noqa: E402
 import translate  # noqa: E402
 import discover  # noqa: E402
+import products  # noqa: E402
 import xlsx  # noqa: E402
 import secrets_util  # noqa: E402
 DB_PATH = os.environ.get("LEADS_DB", os.path.join(HERE, "leads.db"))
@@ -45,7 +46,7 @@ SEGMENTS = {  # segment: (taban puan, e-posta metninde geçen etiket)
     "other": (5, "the food industry"),
 }
 STATUSES = ["new", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]
-FOLLOWUP_DAYS = {"email": 5, "call": 7, "sample": 10, "meeting": 7, "note": None}
+FOLLOWUP_DAYS = {"email": 5, "call": 7, "sample": 10, "meeting": 7, "quote": 5, "note": None}
 
 COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
     "DE": ("Almanya", "DEU"), "NL": ("Hollanda", "NLD"), "BE": ("Belçika", "BEL"), "FR": ("Fransa", "FRA"),
@@ -87,6 +88,13 @@ CREATE TABLE IF NOT EXISTS suppressed(value TEXT PRIMARY KEY, added_at TEXT DEFA
 CREATE TABLE IF NOT EXISTS trade_flows(
   year INTEGER, hs TEXT, importer_iso3 TEXT, importer TEXT, partner TEXT,  -- partner: WORLD | TUR
   value_usd REAL, qty_kg REAL, PRIMARY KEY(year, hs, importer_iso3, partner));
+CREATE TABLE IF NOT EXISTS deals(  -- kind: quote (teklif) | sample (numune); status: open | won | lost
+  id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  kind TEXT DEFAULT 'quote', product TEXT, qty_t REAL, price_kg REAL, currency TEXT DEFAULT 'USD', incoterm TEXT,
+  valid_until TEXT, tracking TEXT, status TEXT DEFAULT 'open', note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);
+CREATE TABLE IF NOT EXISTS tasks(
+  id INTEGER PRIMARY KEY, company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
+  title TEXT NOT NULL, due TEXT, done_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
 """
 
 
@@ -99,7 +107,8 @@ NEW_COLUMNS = [("value_usd", "REAL"), ("product", "TEXT"), ("lost_reason", "TEXT
                ("lat", "REAL"), ("lon", "REAL"), ("data_score", "INTEGER DEFAULT 0"), ("enrich_pages", "INTEGER DEFAULT 0"),
                ("enrich_error", "TEXT"), ("enrich_v", "INTEGER DEFAULT 0"),
                ("buyer_type", "TEXT"), ("categories", "TEXT"), ("b2b_signal", "INTEGER"), ("fit_reasons", "TEXT"), ("name_gloss", "TEXT"),
-               ("name_latin", "TEXT"), ("desc_tr", "TEXT"), ("summary_tr", "TEXT"), ("offer", "TEXT")]
+               ("name_latin", "TEXT"), ("desc_tr", "TEXT"), ("summary_tr", "TEXT"), ("offer", "TEXT"),
+               ("evidence", "TEXT"), ("archived", "INTEGER DEFAULT 0")]
 CONTACT_COLUMNS = [("dept", "TEXT"), ("kind", "TEXT"), ("confidence", "INTEGER"), ("source_url", "TEXT")]
 
 
@@ -173,6 +182,15 @@ def delete_companies(con, ids):
 def config():
     with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
         return json.load(f)
+
+
+def save_config(updates):
+    """config.json'daki alanları günceller (diğer ayarlar ve tema korunur)."""
+    cfg = config()
+    cfg.update({k: v for k, v in updates.items() if isinstance(v, str)})
+    with open(os.path.join(HERE, "config.json"), "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+        f.write("\n")
 
 
 def today():
@@ -422,7 +440,16 @@ def _emp_int(v):
     return int(re.sub(r"\D", "", m.group(0))) if m else 0
 
 
-def suggest_offer(buyer, cats):
+def suggest_offer(buyer, cats, evidence=None):
+    if evidence and buyer != "distributor":
+        ings = evidence.get("ingredients", [])
+        o = []
+        if "en:cocoa-powder" in ings:
+            o.append("ürünlerinde kullandığı kakao tozu (doğal / alkalize, %10-12 yağlı)")
+        if "en:cocoa-butter" in ings:
+            o.append("kakao yağı (deodorize / doğal)")
+        o.append("kuvertür / kompunt" if any(k in cats for k in ("biscuit", "wafer", "cake", "ice_cream")) else "kakao hamuru (liquor)")
+        return "Teklif: " + "; ".join(o) + " — mevcut tedarikçisine alternatif fiyat + ücretsiz numune"
     if buyer == "distributor":
         return "Ambalajlı kakao tozu ve kakao yağı (25 kg çuval / big bag), özel etiket, depo stoklu teslimat"
     o = []
@@ -461,7 +488,14 @@ def refresh_derived(con, cid):
         cats = {}
     con.execute("UPDATE companies SET name_gloss=?, name_latin=?, summary_tr=?, offer=? WHERE id=?",
                 (translate.gloss_name(c["name"]), translate.translit(c["name"]), build_summary(c, cats, c["buyer_type"]),
-                 suggest_offer(c["buyer_type"], cats), cid))
+                 suggest_offer(c["buyer_type"], cats, load_evidence(c)), cid))
+
+
+def load_evidence(c):
+    try:
+        return json.loads(c["evidence"]) if c["evidence"] else None
+    except (ValueError, IndexError, KeyError):
+        return None
 
 
 def apply_enrichment(con, cid, res):
@@ -786,7 +820,7 @@ def cmd_enrich(a):
     workers = max(1, min(int(getattr(a, "workers", 0) or 6), 16))
     pages = int(getattr(a, "pages", 0) or 8)
     force = bool(getattr(a, "force", False))
-    where = "website IS NOT NULL AND website<>''" + ("" if force else " AND IFNULL(enrich_v,0)<2")
+    where = "website IS NOT NULL AND website<>'' AND IFNULL(archived,0)=0" + ("" if force else " AND IFNULL(enrich_v,0)<2")
     if getattr(a, "ids", None):
         where += f" AND id IN ({','.join(str(int(i)) for i in a.ids)})"
     ccs = [c for c in (getattr(a, "countries", None) or []) if c in COUNTRIES]
@@ -958,6 +992,82 @@ def cmd_harvest_wikidata(a):
     log(f"Wikidata: {seen} firma işlendi, {new} yeni eklendi. Sıradaki adım: Firma bul → Derin tarama (e-posta, telefon, kişi).")
 
 
+def cmd_harvest_products(a):
+    """Kanıtlı alıcılar: ürün etiketinde kakao tozu/kakao yağı geçen markalar (OpenFoodFacts). Market markaları ve dev gruplar elenir."""
+    con = db()
+    log = lambda m: print(m, flush=True)  # noqa: E731
+    ccs = [c.strip().upper() for c in (getattr(a, "country", "") or "").split(",") if c.strip().upper() in COUNTRIES]
+    if not ccs:
+        log("Ülke seçilmedi.")
+        return
+    found = products.harvest(ccs, log=log, cancel=CANCEL, pages=int(getattr(a, "pages", 0) or 8))
+    new = upd = 0
+    for cc, e in found:
+        site = e.get("website")
+        if not site and e["n"] < 2:  # sitesi bulunamayan tek ürünlü markalar işe yaramaz
+            continue
+        dom = get_domain(site) if site else ""
+        tld = dom.rsplit(".", 1)[-1].upper() if dom else ""
+        country = tld if tld in COUNTRIES else cc
+        cid, is_new = upsert_company(con, e["brand"], country, None, site, e["segment"], "urun-kaniti",
+                                     notes="Ürün etiketinde kakao: " + products.evidence_text(e))
+        if not cid:
+            continue
+        c = con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone()
+        if site and not c["website"]:  # daha önce sitesiz eklenmişse şimdi bulunan siteyi yaz
+            try:
+                con.execute("UPDATE companies SET website=?, domain=? WHERE id=?", (norm_url(site), dom or None, cid))
+            except sqlite3.IntegrityError:
+                pass
+        old = load_evidence(c) or {}
+        ev = {"n": max(e["n"], old.get("n", 0)), "ingredients": sorted(set(e["ingredients"]) | set(old.get("ingredients", []))),
+              "examples": (old.get("examples", []) + [x for x in e["examples"] if x not in old.get("examples", [])])[:4],
+              "markets": sorted(set(old.get("markets", [])) | {cc}), "brand": e["brand"]}
+        try:
+            cats = json.loads(c["categories"] or "{}")
+        except ValueError:
+            cats = {}
+        for k, v in e["cats"].items():
+            cats[k] = max(cats.get(k, 0), min(v * 2, 10))
+        con.execute("UPDATE companies SET evidence=?, categories=?, buyer_type=CASE WHEN IFNULL(buyer_type,'unknown') IN ('unknown','retail','craft') "
+                    "THEN 'industrial' ELSE buyer_type END, segment=CASE WHEN segment IN ('other','retail_craft') THEN ? ELSE segment END, archived=0 WHERE id=?",
+                    (json.dumps(ev, ensure_ascii=False), json.dumps(cats), e["segment"], cid))
+        refresh_derived(con, cid)
+        new += is_new
+        upd += not is_new
+    con.commit()
+    log(f"Ürün kanıtı: {new} yeni alıcı eklendi, {upd} mevcut firmaya kanıt eklendi. Sıradaki: derin tarama (iletişim) ve puanlama.")
+
+
+ARCHIVE_RULES = [  # (açıklama, koşul) — yalnızca henüz temas edilmemiş ('new') firmalar arşivlenir
+    ("perakende dükkân / kafe", "buyer_type='retail'"),
+    ("kakao işleyici (rakip)", "buyer_type='competitor'"),
+    ("haritadan gelen dükkân/butik (sanayi alıcısı değil)", "segment='retail_craft' AND IFNULL(buyer_type,'unknown') NOT IN ('industrial','distributor')"),
+    ("sitesi açılmayan, iletişimi olmayan", "enrich_error IS NOT NULL AND IFNULL(phone,'')='' AND NOT EXISTS("
+     "SELECT 1 FROM contacts k WHERE k.company_id=companies.id AND k.email_ok=1)"),
+]
+ARCHIVE_BASE = "IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND evidence IS NULL"
+
+
+def archive_candidates(con):
+    """[(açıklama, adet)] — arşive gidecek firmalar (kanıtlı alıcılar, yıldızlılar ve temas edilenler hiç arşivlenmez)."""
+    return [(label, con.execute(f"SELECT COUNT(*) FROM companies WHERE {ARCHIVE_BASE} AND ({cond})").fetchone()[0]) for label, cond in ARCHIVE_RULES]
+
+
+def auto_archive(con):
+    """İşe yaramayan firmaları silmeden arşive kaldırır; Firmalar → Arşiv'den geri alınabilir. Arşivlenen sayıyı döner."""
+    n = sum(con.execute(f"UPDATE companies SET archived=1 WHERE {ARCHIVE_BASE} AND ({cond})").rowcount for _, cond in ARCHIVE_RULES)
+    con.commit()
+    return n
+
+
+def cmd_cleanup(a):
+    con = db()
+    for label, k in archive_candidates(con):
+        print(f"  {label}: {k}")
+    print(f"{auto_archive(con)} firma arşive kaldırıldı (silinmedi; Firmalar → Arşiv'den geri alınabilir).")
+
+
 def market_ranks(con):
     return {r["iso"]: (r["rk"], r["from_tr"]) for r in con.execute("""
       SELECT w.importer_iso3 iso, IFNULL(SUM(t.value_usd),0) from_tr,
@@ -973,6 +1083,10 @@ def score_company(con, c, imp):
     bt = c["buyer_type"] or "unknown"
     enriched = (c["enrich_v"] or 0) >= 2 and not c["enrich_error"]
     reasons = []
+    ev = load_evidence(c)
+    if ev and bt in ("unknown", "retail", "craft"):  # ürünlerinde kakao kullandığı kanıtlı: kendi markasıyla üretici/marka sahibi
+        bt = "industrial"
+        con.execute("UPDATE companies SET buyer_type='industrial' WHERE id=?", (c["id"],))
     base = {"industrial": 38, "distributor": 32, "craft": 10, "retail": 0, "competitor": 6}.get(bt)
     if base is None:  # henüz sınıflanmadı: segmentten kaba tahmin
         base = round(SEGMENTS.get(c["segment"], SEGMENTS["other"])[0] * 0.55)
@@ -984,6 +1098,9 @@ def score_company(con, c, imp):
         cats = json.loads(c["categories"] or "{}")
     except ValueError:
         cats = {}
+    if ev:
+        s += min(18, 8 + 2 * ev.get("n", 1))
+        reasons.insert(0, "Kanıt: " + products.evidence_text(ev))
     rel = [k for k in crawler.USER_CATS if cats.get(k, 0) >= 2]
     if rel:
         s += min(14, 4 * len(rel))
@@ -1136,6 +1253,117 @@ def snooze(con, cid, days=3):
     return d
 
 
+# ---------------------------------------------------------------- teklif, numune, görev
+DEAL_PRODUCTS = ["Kakao tozu (doğal)", "Kakao tozu (alkalize)", "Kakao yağı", "Kakao hamuru (liquor)", "Kuvertür / kompunt çikolata", "Diğer"]
+INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP", "DDP"]
+STATUS_ORDER = {s: i for i, s in enumerate(["new", "contacted", "replied", "sample", "negotiation", "won"])}
+
+
+def fx_usd(currency):
+    """Para birimini dolara çevirme katsayısı (config.json → fx; ör. {"EUR": 1.08})."""
+    return 1.0 if (currency or "USD") == "USD" else float((config().get("fx") or {}).get(currency, {"EUR": 1.08, "GBP": 1.27}.get(currency, 1.0)))
+
+
+def deal_total_usd(d):
+    return (d["qty_t"] or 0) * 1000 * (d["price_kg"] or 0) * fx_usd(d["currency"])
+
+
+def refresh_value(con, cid):
+    """Firmanın fırsat değeri = açık ve kazanılmış tekliflerinin toplamı ($)."""
+    rows = con.execute("SELECT * FROM deals WHERE company_id=? AND kind='quote' AND status IN ('open','won')", (cid,)).fetchall()
+    if rows:
+        con.execute("UPDATE companies SET value_usd=? WHERE id=?", (round(sum(deal_total_usd(d) for d in rows)), cid))
+
+
+def _raise_status(con, cid, status):
+    cur = con.execute("SELECT status FROM companies WHERE id=?", (cid,)).fetchone()[0]
+    return status if STATUS_ORDER.get(status, 0) > STATUS_ORDER.get(cur, 0) and cur not in ("lost", "won") else None
+
+
+def add_deal(con, cid, kind="quote", product=None, qty_t=None, price_kg=None, currency="USD", incoterm=None, valid_until=None, tracking=None, note=None):
+    """Teklif ya da numune kaydı. Geçmişe yazar, durumu ilerletir (teklif → Pazarlık, numune → Numune) ve takip tarihini kurar."""
+    if kind not in ("quote", "sample"):
+        raise ValueError("kind: quote | sample")
+    cur = con.execute("INSERT INTO deals(company_id,kind,product,qty_t,price_kg,currency,incoterm,valid_until,tracking,note) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                      (cid, kind, product, qty_t, price_kg, currency or "USD", incoterm, valid_until, tracking, note))
+    if kind == "quote":
+        parts = [product or "teklif", f"{qty_t:g} ton" if qty_t else "", f"{price_kg:g} {currency}/kg" if price_kg else "", incoterm or "",
+                 f"geçerli: {valid_until}" if valid_until else ""]
+        days = None
+        if valid_until:
+            try:
+                days = max(1, (dt.date.fromisoformat(valid_until) - dt.date.today()).days - 2)  # süresi dolmadan 2 gün önce hatırlat
+            except ValueError:
+                days = None
+        do_log(con, cid, "quote", "Teklif verildi: " + " · ".join(x for x in parts if x), _raise_status(con, cid, "negotiation"), days)
+    else:
+        parts = [product or "numune", f"takip no: {tracking}" if tracking else "", note or ""]
+        do_log(con, cid, "sample", "Numune gönderildi: " + " · ".join(x for x in parts if x), _raise_status(con, cid, "sample"), 10)
+    refresh_value(con, cid)
+    con.commit()
+    return cur.lastrowid
+
+
+DEAL_OUTCOME = {("quote", "won"): "Teklif kabul edildi", ("quote", "lost"): "Teklif reddedildi",
+                ("sample", "won"): "Numune beğenildi", ("sample", "lost"): "Numune beğenilmedi"}
+
+
+def close_deal(con, deal_id, outcome, note=""):
+    d = con.execute("SELECT * FROM deals WHERE id=?", (deal_id,)).fetchone()
+    if not d or outcome not in ("won", "lost"):
+        raise ValueError("Bulunamadı")
+    con.execute("UPDATE deals SET status=?, closed_at=? WHERE id=?", (outcome, today(), deal_id))
+    status = None
+    if d["kind"] == "quote" and outcome == "won":
+        status = "won"
+    elif d["kind"] == "sample" and outcome == "won":
+        status = _raise_status(con, d["company_id"], "negotiation")
+    summary = DEAL_OUTCOME[(d["kind"], outcome)] + f" ({d['product'] or ''})" + (f" – {note}" if note else "")
+    do_log(con, d["company_id"], "note", summary, status, 3 if d["kind"] == "sample" and outcome == "won" else None)
+    refresh_value(con, d["company_id"])
+    con.commit()
+
+
+def open_deals(con, kind=None):
+    sql = "SELECT d.*, c.name, c.country FROM deals d JOIN companies c ON c.id=d.company_id WHERE d.status='open'"
+    p = []
+    if kind:
+        sql += " AND d.kind=?"
+        p.append(kind)
+    return con.execute(sql + " ORDER BY IFNULL(d.valid_until,'9999'), d.created_at", p).fetchall()
+
+
+def add_task(con, title, due=None, cid=None):
+    title = (title or "").strip()
+    if not title:
+        raise ValueError("Görev boş olamaz")
+    cur = con.execute("INSERT INTO tasks(company_id,title,due) VALUES(?,?,?)", (cid, title, due or today()))
+    con.commit()
+    return cur.lastrowid
+
+
+def done_task(con, tid):
+    t = con.execute("SELECT * FROM tasks WHERE id=?", (tid,)).fetchone()
+    if not t:
+        raise ValueError("Bulunamadı")
+    con.execute("UPDATE tasks SET done_at=? WHERE id=?", (today(), tid))
+    if t["company_id"]:
+        con.execute("INSERT INTO activities(company_id,kind,summary) VALUES(?,?,?)", (t["company_id"], "note", "Görev tamamlandı: " + t["title"]))
+    con.commit()
+    return t
+
+
+def open_tasks(con, cid=None, until=None):
+    sql, p = "SELECT t.*, c.name FROM tasks t LEFT JOIN companies c ON c.id=t.company_id WHERE t.done_at IS NULL", []
+    if cid:
+        sql += " AND t.company_id=?"
+        p.append(cid)
+    if until:
+        sql += " AND IFNULL(t.due,'')<=?"
+        p.append(until)
+    return con.execute(sql + " ORDER BY IFNULL(t.due,'9999'), t.id", p).fetchall()
+
+
 def cmd_log(a):
     con = db()
     try:
@@ -1190,10 +1418,24 @@ def render_email(con, cid, lang="en", template="cold"):
     k = best_contact(con, cid)
     name = k["name"] if k and k["name"] else None
     greeting = (f"Dear {name}" if name else "Dear Sir or Madam") if lang == "en" else (f"Guten Tag {name}" if name else "Sehr geehrte Damen und Herren")
+    seg = SEGMENTS.get(c["segment"], SEGMENTS["other"])[1]
     ctx = _Safe(config(), company=c["name"], contact=(name or ("Sir or Madam" if lang == "en" else "Damen und Herren")), greeting=greeting,
-                segment_label=SEGMENTS.get(c["segment"], SEGMENTS["other"])[1])
+                segment_label=seg, hook=email_hook(c, lang, seg))
     with open(path, encoding="utf-8") as f:
         return (k["email"] if k else None), f.read().format_map(ctx)
+
+
+def email_hook(c, lang, seg):
+    """Giriş cümlesi. Ürün kanıtı varsa firmanın kendi ürününden söz eder (soğuk e-postada yanıt oranını en çok artıran şey)."""
+    ev = load_evidence(c)
+    i = {"de": 2}.get(lang, 1)
+    if ev and ev.get("ingredients"):
+        ings = (" und " if lang == "de" else " and ").join(products.INGREDIENTS[x][i] for x in ev["ingredients"] if x in products.INGREDIENTS)
+        ex = ev.get("examples", [])[:1]
+        if lang == "de":
+            return f"Da {c['name']} in Produkten wie „{ex[0]}“ {ings} verwendet" if ex else f"Da {c['name']} {ings} verarbeitet"
+        return f"I noticed that {c['name']} uses {ings} in products such as \u201c{ex[0]}\u201d" if ex else f"I noticed that {c['name']} uses {ings} in its products"
+    return f"Da {c['name']} im Bereich {seg} tätig ist" if lang == "de" else f"I noticed {c['name']} works in {seg}"
 
 
 def cmd_compose(a):
@@ -1244,7 +1486,7 @@ def contact_summary(con, cid):
 def opportunity_rows(con, country=None, min_score=50, btype=None, ready=False, limit=None):
     """Kakao alıcısı olması muhtemel firmalar (sanayi kullanıcısı / distribütör), uygunluk puanına göre. Her satıra 'contact' eklenir."""
     types = (btype,) if btype in ("industrial", "distributor") else ("industrial", "distributor")
-    sql = ("SELECT * FROM companies WHERE status NOT IN ('lost','won') AND score>=? AND IFNULL(buyer_type,'unknown') IN (" + ",".join("?" * len(types)) + ")")
+    sql = ("SELECT * FROM companies WHERE IFNULL(archived,0)=0 AND status NOT IN ('lost','won') AND score>=? AND IFNULL(buyer_type,'unknown') IN (" + ",".join("?" * len(types)) + ")")
     p = [min_score, *types]
     if country:
         sql += " AND country=?"
@@ -1360,6 +1602,9 @@ def main():
     add("seed", cmd_seed, "hazır başlangıç listesini (bilinen alıcılar) içe aktar")
     s = add("harvest-wikidata", cmd_harvest_wikidata, "Wikidata'dan bilinen çikolata/şekerleme firmalarını çek")
     s.add_argument("--country", default="", help="ISO2 virgülle (boş = hepsi)")
+    s = add("harvest-products", cmd_harvest_products, "ürün etiketinde kakao geçen markaları bul (OpenFoodFacts, kanıtlı alıcılar)")
+    s.add_argument("--country", required=True, help="ISO2 virgülle: DE,NL,PL"); s.add_argument("--pages", type=int, default=8)
+    add("cleanup", cmd_cleanup, "dükkân/kafe/rakip gibi uygun olmayanları arşive kaldır (silmez)")
     add("score", cmd_score, "firmaları puanla")
     s = add("list", cmd_list, "firmaları listele")
     s.add_argument("--status"); s.add_argument("--country"); s.add_argument("--segment")

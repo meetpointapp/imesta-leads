@@ -4,7 +4,7 @@ Dear {contact},
 
 I am {sender_name} from {company_name}, a Turkish cocoa processor and exporter. We supply {products} to food manufacturers in Europe, the Middle East and beyond.
 
-I noticed {company} works in {segment_label}, so I wanted to ask whether you are currently looking for an additional or alternative cocoa supplier. What we can offer:
+{hook}, so I wanted to ask whether you are currently looking for an additional or alternative cocoa supplier. What we can offer:
 
 - Consistent quality with specification sheets and COA for every batch
 - Flexible packaging (25 kg bags, big bags, private label) and competitive FOB/CIF prices

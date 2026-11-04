@@ -4,7 +4,7 @@ Betreff: Kakaopulver & Kakaobutter aus der Türkei – {company}
 
 mein Name ist {sender_name} von {company_name}, einem türkischen Kakaoverarbeiter und Exporteur. Wir liefern {products} an Lebensmittelhersteller in Europa und im Nahen Osten.
 
-Da {company} im Bereich {segment_label} tätig ist, möchte ich fragen, ob Sie aktuell einen zusätzlichen oder alternativen Kakaolieferanten suchen. Wir bieten:
+{hook}, möchte ich fragen, ob Sie aktuell einen zusätzlichen oder alternativen Kakaolieferanten suchen. Wir bieten:
 
 - Gleichbleibende Qualität mit Spezifikation und Analysezertifikat je Charge
 - Flexible Verpackung (25-kg-Säcke, Big Bags, Private Label) und wettbewerbsfähige Preise

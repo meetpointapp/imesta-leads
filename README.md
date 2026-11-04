@@ -25,7 +25,9 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 
 Hedef: Google'da elle aramak yerine, **kakaoyu hammadde olarak satın alacak firmaları** hazır, gerekçeli ve iletişimiyle birlikte listelemek.
 
-1. **Keşfet → Otopilot:** ülke seç, tek düğme. Sırayla: hazır alıcı listesi (~150 bilinen kakao kullanıcısı/distribütör) → arama motoru keşfi (yerel dillerde, anahtar varsa) → harita verisi (bisküvi/dondurma/süt sanayi, toptancılar; **dükkânlar değil**) → Wikidata → sitelerin derin taraması → puanlama + çeviri.
+1. **Firma bul → Otopilot:** ülke seç, tek düğme. Sırayla: hazır alıcı listesi (~150 bilinen kakao kullanıcısı/distribütör) → **ürün kanıtı** (aşağıda) → arama motoru keşfi (yerel dillerde, anahtar varsa) → harita verisi (bisküvi/dondurma/süt sanayi, toptancılar; **dükkânlar değil**) → Wikidata → sitelerin derin taraması → puanlama + çeviri → alıcı olmayanları arşive kaldırma.
+   - **Ürün kanıtı (en isabetli kaynak):** açık ürün veritabanı OpenFoodFacts'te o ülkede satılan ve etiketinde *kakao tozu / kakao yağı* yazan ürünler çekilir, markalarına göre toplanır. Market özel markaları (Lidl, Aldi, Jumbo…) ve dev gruplar (Nestlé, Mondelez, Ferrero, Lindt…) elenir. Web sitesi Wikidata'dan ya da alan adı tahminiyle bulunur ve sitenin gerçekten o gıda firmasına ait olduğu kontrol edilir. Her firmaya "12 ürününde kakao tozu var, ör. 'Schoko Kekse'" kanıtı yazılır; e-posta taslağı da bu ürünle başlar ("I noticed that X uses cocoa powder in products such as …"). Komut satırı: `py leads.py harvest-products --country DE,NL,PL`.
+   - **Arşiv:** haritadan gelen dükkân/kafe/butikler, rakip kakao işleyicileri ve sitesi açılmayan iletişimsiz firmalar silinmez, arşive kalkar (Firmalar → "arşivde N"). Kanıtlı, yıldızlı ya da temas edilmiş firmalar hiç arşivlenmez. Komut satırı: `py leads.py cleanup`.
 2. **Fırsatlar:** ülke ülke sıralı kartlar. Her kartta: uygunluk puanı (0–100), **neden potansiyel** (Türkçe gerekçeler), firma adının Türkçe anlamı, ne ürettiği, ne teklif edileceği, kime yazılacağı (satın alma/ihracat/satış kişisi, e-posta, telefon), firmanın kendini anlatışının Türkçesi. Tek tıkla taslak, "gönderdim", "uygun değil". **Excel indir** (2 sayfa: fırsatlar + tüm kişiler).
 3. **Alıcı tipi** her sitede otomatik belirlenir: *kakao kullanan üretici* (bisküvi, gofret, kek, dondurma, süt, tahıl, ezme, şekerleme), *toptancı/distribütör*, *küçük/butik*, *perakende dükkân* (fırsat değil), *kakao işleyici = rakip* (fırsat değil).
 4. **Puan** = firma tipi + ürünler + kakao ilgisi + ölçek (50–2000 çalışan en iyi) + B2B sinyali + ulaşılabilirlik (satın alma kişisi, e-posta) + pazar büyüklüğü (Comtrade).
@@ -56,10 +58,12 @@ Testler: `python3 -m unittest discover tests`
 python3 web.py              # http://127.0.0.1:8765
 ```
 Sayfalar:
-- **Bugün** – her sabah ilk açılacak ekran: geciken takipler, bugünkü işler, cevap bekleyen sıcak müşteriler, soğuyanlar, yazılacak en iyi firmalar. Her satırda tek tıkla *Mail attım / Aradım / Cevap geldi / 3 gün ertele*; takip tarihi otomatik kurulur (1. mailden sonra 5 gün, 2.'den sonra 7, 3.'den sonra 14, sonra 30).
+- **Bugün** – her sabah ilk açılacak ekran. Üstte günün planı (takip, görev, süresi dolan teklif, geri bildirimi gelmeyen numune, yazılmayı bekleyen kanıtlı alıcı sayıları), altında geciken takipler, bugünkü işler, **Görevlerim**, teklif/numune uyarıları, cevap bekleyen sıcak müşteriler, soğuyanlar, yazılacak en iyi firmalar (kanıtlılar önce). Her satırda tek tıkla *Mail attım / Aradım / Cevap geldi / 3 gün ertele*; takip tarihi otomatik kurulur (1. mailden sonra 5 gün, 2.'den sonra 7, 3.'den sonra 14, sonra 30).
 - **Satış hattı** – kartları sürükle-bırak ile durumlar arasında taşı; fırsat değeri ve soğuyan müşteri uyarısı.
 - **Firmalar** – sütun başlığına tıklayarak sıralama, filtre, yıldızlama, sayfalama, **toplu işlem** (silme, durum, segment) ve Excel'e aktarma. Silinen firma, otomatik taramalarda tekrar eklenmez.
-- **Firma detayı** – sıradaki adım önerisi, tek tıkla kayıt, kişiler, geçmiş, düzenleme, sil, e-posta taslağı (ülkeye ve gönderilen e-posta sayısına göre dil/şablon önerir).
+- **Firma detayı** – sıradaki adım önerisi, tek tıkla kayıt, **Teklif ver** (ürün, ton, fiyat/kg, para birimi, teslim şekli, geçerlilik), **Numune gönder** (kargo takip no), görevler, kişiler, geçmiş, arşivle, sil, e-posta taslağı. Teklif verince durum *Pazarlık* olur, fırsat değeri ton × fiyattan hesaplanır, geçerlilik bitmeden 2 gün önce hatırlatılır; numuneden 10 gün sonra "beğendiniz mi?" takibi kurulur. Kabul/Red ile kapatılır (kabul → Kazanıldı).
+- **Satış hattı** altında tüm açık teklifler ve yoldaki numuneler (toplam ton ve $).
+- **Ayarlar → Firma ve imza bilgileri:** e-postalarda geçen ad, unvan, telefon, ürünler, sertifikalar (`config.json`'a yazılır).
 - **Pazarlar** – ülke sıralaması + her ülke için **Firma bul** düğmesi. **Firma bul** – otomatik firma + e-posta toplama. **Liste yükle** / **Firma ekle**.
 - **Yedek:** `leads.db` her gün otomatik olarak `backups/` klasörüne yedeklenir (son 14 gün); toplu/tekli silmeden önce de ek yedek alınır.
 
