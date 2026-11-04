@@ -13,6 +13,7 @@ import hmac
 import html
 import json
 import os
+import re
 import sqlite3
 import tempfile
 import threading
@@ -50,6 +51,22 @@ SORTS = {  # url anahtarı: (sql ifadesi, boş değerler sona mı)
     "data": ("data_score", False), "last": ("last_contacted", True), "next": ("next_followup", True), "value": ("value_usd", True), "new": ("id", False),
 }
 DE_COUNTRIES = {"DE", "AT", "CH"}
+BASE_PATH = os.environ.get("BASE_PATH", "").rstrip("/")  # sunucuda nginx arkasında alt yol, ör. /kakaocrm
+LINK_RE = re.compile(r"""((?:href|action|src)=["']?)/(?!/)""")
+
+
+def strip_base(p):
+    """İstek yolundan alt yolu çıkarır: /kakaocrm/leads → /leads."""
+    if BASE_PATH and (p == BASE_PATH or p.startswith(BASE_PATH + "/") or p.startswith(BASE_PATH + "?")):
+        return p[len(BASE_PATH):] or "/"
+    return p
+
+
+def with_base(text):
+    """Sayfadaki kök bağlantılara alt yolu ekler (href="/leads" → href="/kakaocrm/leads")."""
+    if not BASE_PATH:
+        return text
+    return LINK_RE.sub(lambda m: m.group(1) + BASE_PATH + "/", text).replace("fetch('/", f"fetch('{BASE_PATH}/")
 
 JOB = {"running": False, "name": "", "log": "", "summary": ""}
 JOB_LOCK = threading.Lock()
@@ -1193,6 +1210,8 @@ class H(BaseHTTPRequestHandler):
         return False
 
     def _send(self, code, body, ctype="text/html; charset=utf-8", extra=None):
+        if isinstance(body, str) and ctype.startswith("text/html"):
+            body = with_base(body)
         data = body.encode("utf-8") if isinstance(body, str) else body
         self.send_response(code)
         self.send_header("Content-Type", ctype)
@@ -1209,13 +1228,13 @@ class H(BaseHTTPRequestHandler):
         if flash:
             to += ("&" if "?" in to else "?") + "msg=" + urllib.parse.quote(flash)
         self.send_response(303)
-        self.send_header("Location", to)
+        self.send_header("Location", BASE_PATH + to)
         self.end_headers()
 
     def do_GET(self):
         if not self._auth():
             return
-        u = urllib.parse.urlparse(self.path)
+        u = urllib.parse.urlparse(strip_base(self.path))
         q = urllib.parse.parse_qs(u.query)
         flash = (q.get("msg") or [""])[0]
         con = leads.db()
@@ -1278,7 +1297,7 @@ class H(BaseHTTPRequestHandler):
             return self._send(413, "Çok büyük")
         multi = urllib.parse.parse_qs(self.rfile.read(n).decode("utf-8", "replace"), keep_blank_values=True)
         f = {k: v[0].strip() for k, v in multi.items()}
-        path = urllib.parse.urlparse(self.path).path
+        path = urllib.parse.urlparse(strip_base(self.path)).path
         con = leads.db()
         try:
             self._post(con, path, f, multi)
@@ -1481,15 +1500,15 @@ def main():
     p.add_argument("--port", type=int, default=8765)
     p.add_argument("--open", action="store_true", help="tarayıcıyı otomatik aç")
     a = p.parse_args()
-    if a.host != "127.0.0.1" and not os.environ.get("WEB_PASSWORD"):
-        raise SystemExit("Güvenlik: localhost dışına açmak için WEB_PASSWORD ortam değişkenini ayarlayın.")
+    if (a.host != "127.0.0.1" or BASE_PATH) and not os.environ.get("WEB_PASSWORD"):
+        raise SystemExit("Güvenlik: internete açmak (dış adres ya da BASE_PATH) için WEB_PASSWORD ortam değişkenini ayarlayın.")
     leads.db().close()
     try:
         leads.backup_db()  # günlük otomatik yedek
     except Exception as e:
         print("Yedek alınamadı:", e)
     srv = None
-    for port in range(a.port, a.port + 20):  # port doluysa sıradakini dene
+    for port in ([a.port] if BASE_PATH else range(a.port, a.port + 20)):  # yerelde port doluysa sıradakini dene; sunucuda nginx sabit portu bekler
         try:
             srv = ThreadingHTTPServer((a.host, port), H)
             break

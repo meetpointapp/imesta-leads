@@ -2,7 +2,7 @@
 import json
 import os
 
-PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "secrets.json")
+PATH = os.environ.get("LEADS_SECRETS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "secrets.json")
 KEYS = ["brave_api_key", "google_api_key", "google_cx", "anthropic_api_key", "libretranslate_url", "libretranslate_key"]
 
 

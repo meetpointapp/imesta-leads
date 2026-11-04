@@ -70,6 +70,11 @@ Sayfalar:
 - Renkler ve logo: `config.json` → `theme` (`brand`, `accent`, `cream`, `cocoa`, `logo_url`). imestafood.com'a erişemediğim için kakao kahvesi + krem + altın paleti kullandım; kurumsal renk kodlarınızı buraya yazın.
 - Ekip içinde paylaşmak için: `WEB_PASSWORD=sifreniz python3 web.py --host 0.0.0.0` (kullanıcı adı: `imesta`). Şifresiz sadece kendi bilgisayarınızda (127.0.0.1) açılır. İnternete açacaksanız HTTPS arkasına (ör. Caddy/nginx) koyun.
 
+## Sunucuda çalıştırma (https://kahveotoritesi.com/kakaocrm)
+
+`deploy/install.sh` paneli Linux sunucuda kurar: `/opt/kakaocrm` (kod, GitHub'dan), `/var/lib/kakaocrm` (veritabanı, firma/imza ayarları, anahtarlar, günlük yedekler), systemd servisi `kakaocrm` (port 3080, yalnızca 127.0.0.1), nginx'te kahveotoritesi.com sitesine `/kakaocrm` yolu (operasyon panelinin hemen yanına; `nginx -t` başarısızsa geri alır, diğer sitelere dokunmaz). Giriş: kullanıcı `imesta`, şifre ilk kurulumda üretilir (`/etc/kakaocrm.env`).
+Güncellemek için aynı betiği tekrar çalıştırın (`git pull` + yeniden başlatma; veriler korunur). Yerel verileri taşımak için önce `leads.db`'yi `/root/kakaocrm-leads.db`, `config.json`'u `/root/kakaocrm-config.json` olarak yükleyin. Sunucuya geçtikten sonra yerel paneli kullanmayın; iki ayrı veritabanı birbirinden habersiz değişir.
+
 ## Hızlı başlangıç (komut satırı)
 
 ```bash

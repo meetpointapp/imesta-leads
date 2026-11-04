@@ -179,8 +179,12 @@ def delete_companies(con, ids):
     return n
 
 
+CONFIG_PATH = os.environ.get("LEADS_CONFIG") or os.path.join(HERE, "config.json")  # sunucuda kod klasörü dışında tutulur
+
+
 def config():
-    with open(os.path.join(HERE, "config.json"), encoding="utf-8") as f:
+    path = CONFIG_PATH if os.path.exists(CONFIG_PATH) else os.path.join(HERE, "config.json")
+    with open(path, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -188,7 +192,7 @@ def save_config(updates):
     """config.json'daki alanları günceller (diğer ayarlar ve tema korunur)."""
     cfg = config()
     cfg.update({k: v for k, v in updates.items() if isinstance(v, str)})
-    with open(os.path.join(HERE, "config.json"), "w", encoding="utf-8") as f:
+    with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
         f.write("\n")
 

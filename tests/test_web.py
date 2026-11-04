@@ -196,6 +196,18 @@ class T(unittest.TestCase):
         self.assertIn("Valrhona", b.decode())
         self.assertNotIn("Bahlsen", b.decode())
 
+    def test_base_path(self):  # sunucuda nginx arkasında /kakaocrm altında
+        web.BASE_PATH = "/kakaocrm"
+        try:
+            s, b = get("/kakaocrm/leads")
+            self.assertEqual(s, 200)
+            self.assertIn('href="/kakaocrm/firsatlar"', b.decode())
+            self.assertIn("fetch('/kakaocrm/lead/'", b.decode())
+            s, loc = post("/kakaocrm/task/new", [("title", "Alt yol testi"), ("back", "/")])
+            self.assertEqual((s, loc.split("?")[0]), (303, "/kakaocrm/"))
+        finally:
+            web.BASE_PATH = ""
+
     def test_crm_flow(self):
         con = leads.db()
         cid = con.execute("SELECT id FROM companies WHERE domain='bahlsen.com'").fetchone()[0]
