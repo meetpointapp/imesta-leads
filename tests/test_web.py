@@ -216,12 +216,35 @@ class T(unittest.TestCase):
         r = orig_open(B + "/static/logo.svg")
         self.assertEqual((r.status, r.headers.get("Content-Type")), (200, "image/svg+xml"))
 
+    def test_firms_hub_save_and_block(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Hub Kakao Fabrikası", "EG", None, "https://hub-kakao.eg", "chocolate_maker", "osm")
+        con.execute("UPDATE companies SET score=99, fit_reasons=? WHERE id=?", (json.dumps(["Kakao kullanan üretici (sanayi alıcısı)"]), cid))
+        con.commit()
+        con.close()
+        b = get("/?c=EG")[1].decode()
+        for needle in ("Hub Kakao Fabrikası", "CRM'e kaydet", "Engelle", "Kakao kullanan üretici", 'class="segtabs"', 'class="chiptabs"'):
+            self.assertIn(needle, b)
+        post(f"/lead/{cid}/quick", [("do", "save"), ("back", "/")])
+        b = get("/pipeline")[1].decode()
+        for needle in ("Hub Kakao Fabrikası", "Ağırlıklı tahmin", 'class="board"', 'data-status="saved"'):
+            self.assertIn(needle, b)
+        self.assertIn("Hub Kakao Fabrikası", get("/?v=crm")[1].decode())
+        post(f"/lead/{cid}/block", [("back", "/")])
+        con = leads.db()
+        self.assertIsNone(con.execute("SELECT 1 FROM companies WHERE id=?", (cid,)).fetchone())
+        self.assertEqual(leads.upsert_company(con, "Hub Kakao Fabrikası", "EG", None, "https://hub-kakao.eg", "chocolate_maker", "osm"), (None, False))
+        con.close()
+        self.assertIn("Hub Kakao Fabrikası", get("/settings")[1].decode())  # engellenenler listesinde
+        post("/unblock", [("name", "Hub Kakao Fabrikası")])
+        self.assertNotIn("Hub Kakao Fabrikası", get("/settings")[1].decode())
+
     def test_base_path(self):  # sunucuda nginx arkasında /kakaocrm altında
         web.BASE_PATH = "/kakaocrm"
         try:
             s, b = get("/kakaocrm/leads")
             self.assertEqual(s, 200)
-            self.assertIn('href="/kakaocrm/firsatlar"', b.decode())
+            self.assertIn('href="/kakaocrm/pipeline"', b.decode())
             self.assertIn("fetch('/kakaocrm/lead/'", b.decode())
             s, loc = post("/kakaocrm/task/new", [("title", "Alt yol testi"), ("back", "/")])
             self.assertEqual((s, loc.split("?")[0]), (303, "/kakaocrm/"))
@@ -256,7 +279,7 @@ class T(unittest.TestCase):
         con.commit()
         con.close()
         s, b = get("/")
-        self.assertIn("kanıtlı alıcı", b.decode())
+        self.assertIn("Yeni adaylar", b.decode())
 
     def test_autopilot_runs(self):
         out = io.StringIO()

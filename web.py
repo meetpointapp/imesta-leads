@@ -27,11 +27,14 @@ import secrets_util
 from leads import STATUSES, SEGMENTS, COUNTRIES
 
 esc = html.escape
-STATUS_TR = {"new": "Yeni", "contacted": "İletişimde", "replied": "Yanıt verdi", "sample": "Numune",
+STATUS_TR = {"new": "Yeni", "saved": "CRM'de", "contacted": "İletişimde", "replied": "Yanıt verdi", "sample": "Numune",
              "negotiation": "Pazarlık", "won": "Kazanıldı", "lost": "Kaybedildi", "nurture": "Beklemede"}
-STATUS_COLOR = {"new": "#9a8470", "contacted": "#3b82c4", "replied": "#8b5cf6", "sample": "#d98324",
+STATUS_COLOR = {"new": "#9a8470", "saved": "#5b8f74", "contacted": "#3b82c4", "replied": "#8b5cf6", "sample": "#d98324",
                 "negotiation": "#b8863b", "won": "#2e7d32", "lost": "#b04a3a", "nurture": "#6b7f8c"}
 OPEN_STATUSES = ("contacted", "replied", "sample", "negotiation")
+STAGES = ["saved", "contacted", "replied", "sample", "negotiation", "won"]  # satış hattı sütunları
+STAGE_PROB = {"saved": 5, "contacted": 10, "replied": 25, "sample": 40, "negotiation": 60, "won": 100}  # ağırlıklı tahmin için kazanma olasılığı (%)
+ACTIVE_MAP = {"/leads": "/", "/firsatlar": "/", "/add": "/", "/import": "/", "/bugun": "/pipeline", "/tools": "/settings", "/markets": "/settings"}
 SEGMENT_TR = {"biscuit_bakery": "Bisküvi / kek / fırın sanayi", "cereal_snack": "Tahıl / atıştırmalık / ezme", "chocolate_maker": "Çikolata üreticisi", "confectionery": "Şekerleme / bisküvi", "distributor": "Distribütör",
               "bakery_ingredient": "Pastane / fırın malzemesi", "ice_cream": "Dondurma", "dairy_beverage": "Süt / içecek",
               "retail_craft": "Butik / perakende", "other": "Diğer"}
@@ -304,14 +307,55 @@ details.box{border:1px solid var(--line);border-radius:12px;padding:9px 13px;mar
 .market{background:linear-gradient(160deg,var(--brand-3),var(--brand-2));color:#e2f1e8;border:0}.market h3{color:#fff}
 .market dl{display:grid;grid-template-columns:96px minmax(0,1fr);gap:7px 12px;margin:0;font-size:13.5px}.market dt{color:var(--brand-line);font-weight:700}.market dd{margin:0}
 .market .tip{margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,.15);font-size:13.5px}
+/* Firmalar ana ekranı */
+.segtabs{display:inline-flex;gap:4px;background:#e7ece8;border-radius:12px;padding:4px;margin-bottom:12px;flex-wrap:wrap}
+.segtabs a{padding:7px 14px;border-radius:9px;text-decoration:none;color:var(--ink-2);font-weight:700;font-size:14px}
+.segtabs a.on{background:#fff;color:var(--brand);box-shadow:var(--shadow)}.segtabs b{font:600 12px var(--mono);color:var(--muted);margin-left:4px}
+.chiptabs{display:flex;gap:6px;overflow-x:auto;padding-bottom:6px;margin-bottom:12px;scrollbar-width:thin}
+.chiptabs a{flex:none;padding:7px 12px;border:1px solid var(--line);border-radius:99px;background:#fff;text-decoration:none;color:var(--ink);font-weight:600;font-size:13.5px;white-space:nowrap}
+.chiptabs a.on{border-color:var(--brand);background:var(--brand-soft);color:var(--brand)}.chiptabs b{font:600 12px var(--mono);color:var(--muted);margin-left:3px}
+.hubfilter{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px}.hubfilter input[name=q]{flex:1;min-width:200px}
+.hubfilter .chip{margin:0}
+.flist{display:grid;gap:8px}
+.frow{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto;gap:14px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 16px;box-shadow:var(--shadow)}
+.frow:hover{border-color:var(--brand-line)}
+.frow .mono{width:44px;height:44px;border-radius:12px;font-size:15px}.frow .mono img{width:20px;height:20px;right:-5px;bottom:-5px;border-radius:6px;padding:2px}
+.fhead{display:flex;gap:6px;align-items:center;flex-wrap:wrap}.fhead .tag{margin:0}.fname{font-weight:800;color:var(--ink);text-decoration:none;font-size:15.5px}.fname:hover{color:var(--brand)}
+.fsub{color:var(--muted);font-size:13px;display:flex;gap:4px 6px;flex-wrap:wrap;align-items:center;margin-top:2px}.fsub a{color:var(--ink-2)}
+.ficons{display:inline-flex;gap:6px;margin-left:6px;color:var(--brand)}
+.fwhy{font-size:13px;color:var(--ink-2);margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.fscore .score{font-size:15px;padding:5px 9px;min-width:44px}
+.fact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+button.danger-h:hover{color:var(--bad);border-color:#e9c9bf;background:var(--bad-soft)}
+/* Satış */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
+.kpi span{display:block;font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.kpi b{display:block;font:700 24px var(--mono);color:var(--ink);margin:4px 0 2px;letter-spacing:-.02em}.kpi small{color:var(--muted)}
+.kpi:first-child{background:linear-gradient(150deg,var(--brand-3),var(--brand));border:0}.kpi:first-child span,.kpi:first-child small{color:var(--brand-line)}.kpi:first-child b{color:#fff}
+.todos .todo{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:9px 0;border-top:1px dashed var(--line)}
+.todos .todo:first-of-type{border-top:0}.todo small{display:block;color:var(--muted)}.todo a{color:var(--ink);text-decoration:none}.todo .act{display:flex;gap:6px;flex-wrap:wrap}
+.due{font:600 11.5px var(--mono);padding:3px 8px;border-radius:7px;background:#eef1ee;color:var(--ink-2);white-space:nowrap}
+.due.late{background:var(--bad-soft);color:var(--bad)}.due.today{background:var(--warn-soft);color:var(--warn)}.due.none{background:transparent;color:var(--muted)}
+.board{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(250px,1fr);gap:12px;overflow-x:auto;padding-bottom:14px;align-items:start;scroll-snap-type:x mandatory}
+.board .col{background:#edf1ee;border:0;border-top:3px solid var(--c);border-radius:14px;padding:10px;min-height:240px;scroll-snap-align:start}
+.colhead{display:grid;grid-template-columns:1fr auto;gap:0 8px;padding:4px 4px 10px}.colhead b{font-size:14px}.colhead>span{font:700 12px var(--mono);background:#fff;border-radius:99px;padding:1px 8px;color:var(--ink-2)}
+.colhead small{grid-column:1/-1;color:var(--muted);font:600 12px var(--mono)}
+.pcard{display:block;background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 11px;margin-bottom:8px;text-decoration:none;color:var(--ink);cursor:grab;box-shadow:0 1px 2px rgba(16,55,36,.05)}
+.pcard:hover{border-color:var(--brand-line);box-shadow:var(--shadow)}.pcard.drag{opacity:.4}
+.pc-top{display:flex;gap:9px;align-items:center}.pc-top .mono{width:32px;height:32px;border-radius:9px;font-size:12px}.pc-top .mono img{display:none}.pc-top b{font-size:14px;line-height:1.25;display:block}.pc-top small{color:var(--muted)}
+.pc-mid{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin:8px 0 6px;font-size:12.5px;color:var(--ink-2)}.pc-mid .val{font:700 13px var(--mono);color:var(--brand)}
+.pc-foot{display:flex;justify-content:space-between;gap:6px;align-items:center}.pc-foot small{color:var(--muted);font-size:11.5px}
+.board .more{display:block;text-align:center;font-size:13px;padding:6px}
+.board .col.over{background:var(--brand-soft);outline:2px dashed var(--brand)}
 /* tablet */
-@media(max-width:1060px){nav.main a{padding:8px 9px}nav.main a span.lbl{display:none}}
+@media(max-width:1060px){nav.main a{padding:8px 10px}}
 @media(max-width:960px){.two{grid-template-columns:1fr}}
 /* telefon */
 @media(max-width:760px){
  nav.main{display:none}
  header.top .in{padding:0 14px;min-height:56px}.logo span{display:none}
- nav.tabbar{display:grid;grid-template-columns:repeat(5,1fr);position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(255,255,255,.97);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+ nav.tabbar{display:grid;grid-template-columns:repeat(3,1fr);position:fixed;left:0;right:0;bottom:0;z-index:40;background:rgba(255,255,255,.97);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
  nav.tabbar a{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:700;color:var(--muted);text-decoration:none;padding:4px 0;position:relative}
  nav.tabbar a.on{color:var(--brand)}nav.tabbar .cnt{position:absolute;top:0;left:55%}
  main{margin:16px auto 96px;padding:0 14px}
@@ -327,6 +371,10 @@ details.box{border:1px solid var(--line);border-radius:12px;padding:9px 13px;mar
  form.inline>div,form.inline>input{flex:1 1 100%}form.inline input:not([type=checkbox]),form.inline select{width:100%}
  form.inline>div:has(>label.chip){flex:0 1 auto}
  .task .act{width:100%}.pagehead .actions{width:100%}
+ .frow{grid-template-columns:auto minmax(0,1fr) auto;padding:12px}.fact{grid-column:1/-1;justify-content:flex-start}
+ .todos .todo{grid-template-columns:minmax(0,1fr) auto}.todos .todo .act{grid-column:1/-1}
+ .kpis{grid-template-columns:1fr 1fr;gap:8px}.kpi{padding:11px 12px}.kpi:first-child{grid-column:1/-1}.kpi b{font-size:19px}
+ .board{grid-auto-columns:84%}.segtabs{display:flex}.segtabs a{flex:1;text-align:center;padding:7px 8px}
 }
 """
 
@@ -338,7 +386,7 @@ function updBulk(){var n=document.querySelectorAll('input.rowchk:checked').lengt
  if(b){b.classList.toggle('show',n>0);document.getElementById('bulkn').textContent=n}}
 function bulkGo(f){var v=f.elements['do'].value;if(!v){alert('Önce bir işlem seçin');return false}
  if(v==='delete'){return confirm('Seçili firmalar silinecek (kişileri ve geçmişleriyle). Aynı firmalar sonraki taramalarda tekrar eklenmez. Silinsin mi?')}return true}
-document.querySelectorAll('.lead[draggable]').forEach(function(c){
+document.querySelectorAll('.lead[draggable],.pcard[draggable]').forEach(function(c){
  c.addEventListener('dragstart',function(e){e.dataTransfer.setData('text/plain',c.dataset.id);c.classList.add('drag')});
  c.addEventListener('dragend',function(){c.classList.remove('drag')})});
 document.querySelectorAll('.col[data-status]').forEach(function(col){
@@ -357,13 +405,12 @@ def css():
 def layout(title, body, active="", flash="", due=0):
     cfg = leads.config()
     logo = (cfg.get("theme") or {}).get("logo_url") or "/static/logo.svg"
-    nav = [("/", "Bugün", "today"), ("/firsatlar", "Fırsatlar", "target"), ("/pipeline", "Satış", "board"), ("/leads", "Firmalar", "users"),
-           ("/tools", "Firma bul", "search")]
-    cnt = lambda u: f"<span class=cnt>{due}</span>" if u == "/" and due else ""  # noqa: E731
+    nav = [("/", "Firmalar", "users"), ("/pipeline", "Satış", "board"), ("/settings", "Ayarlar", "sliders")]
+    active = ACTIVE_MAP.get(active, active)
+    cnt = lambda u: f"<span class=cnt>{due}</span>" if u == "/pipeline" and due else ""  # noqa: E731
     links = "".join(f'<a href="{u}" class="{"on" if u == active else ""}">{icon(i)}<span class="lbl">{n}</span>{cnt(u)}</a>' for u, n, i in nav)
     tabs = "".join(f'<a href="{u}" class="{"on" if u == active else ""}">{icon(i, 21)}{n}{cnt(u)}</a>' for u, n, i in nav)
-    side = "".join(f'<a href="{u}" class="{"on" if u == active else ""}" title="{n}" aria-label="{n}">{icon(i, 19)}</a>'
-                   for u, n, i in (("/markets", "Pazarlar", "globe"), ("/settings", "Ayarlar", "sliders")))
+    side = f'<a href="/add" title="Firma ekle" aria-label="Firma ekle">{icon("plus", 19)}</a>'
     fl = f'<div class="flash">{icon("check")} {esc(flash)}</div>' if flash else ""
     return f"""<!doctype html><html lang="tr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#1c5e3c"><title>{esc(title)} · Kakao CRM</title>
@@ -592,41 +639,197 @@ def page_today(con, q):
 
 
 # ------------------------------------------------------------------ Satış hattı
+def due_chip(r, td):
+    nf = r["next_followup"]
+    if not nf:
+        return '<span class="due none">takip yok</span>'
+    d = days_from_today(nf)
+    if nf < td:
+        return f'<span class="due late">{d} gün gecikti</span>'
+    if nf == td:
+        return '<span class="due today">bugün</span>'
+    return f'<span class="due">{dt.date.fromisoformat(nf):%d.%m}</span>'
+
+
 def page_pipeline(con, q):
+    td = leads.today()
     n = lambda sql, *p: con.execute(sql, p).fetchone()[0]  # noqa: E731
-    total = n("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0")
-    counts = {st: n("SELECT COUNT(*) FROM companies WHERE status=? AND IFNULL(archived,0)=0", st) for st in STATUSES}
-    vals = {st: n("SELECT IFNULL(SUM(value_usd),0) FROM companies WHERE status=? AND IFNULL(archived,0)=0", st) for st in STATUSES}
-    h = head("Satış hattı", "Kartı sürükleyip başka sütuna bırakarak durumunu değiştir.")
-    if not total:
-        return "Satış hattı", h + '<div class="card empty">Henüz firma yok. <a href="/tools">Firma bul</a> ile başla.</div>', "/pipeline"
-    bar = "".join(f'<i style="width:{100 * counts[s] / total:.2f}%;background:{STATUS_COLOR[s]}" title="{STATUS_TR[s]}: {counts[s]}"></i>' for s in STATUSES if counts[s])
-    lg = "".join(f'<span style="--c:{STATUS_COLOR[s]}">{STATUS_TR[s]} <b>{counts[s]}</b></span>' for s in STATUSES if counts[s])
-    h += f'<div class="card" style="margin-bottom:18px"><div class="funnel">{bar}</div><div class="legend">{lg}</div></div><div class="kanban">'
-    for st in ["new", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]:
-        rows = con.execute("SELECT * FROM companies WHERE status=? AND IFNULL(archived,0)=0 ORDER BY starred DESC, score DESC LIMIT 25", (st,)).fetchall()
-        h += (f'<div class="col" data-status="{st}" style="--c:{STATUS_COLOR[st]}"><h4>{STATUS_TR[st]}'
-              f'<span>{counts[st]}{" · " + money(vals[st]) if vals[st] else ""}</span></h4>')
-        for r in rows:
-            d = days_from_today(r["last_contacted"])
-            cold = d is not None and d >= 14 and st in OPEN_STATUSES
-            h += (f'<a class="lead" draggable="true" data-id="{r["id"]}" href="/lead/{r["id"]}"><b>{"★ " if r["starred"] else ""}{esc(r["name"])}</b>'
-                  f'<small>{esc(cname(r["country"]))} · {r["score"]} puan{" · " + money(r["value_usd"]) if r["value_usd"] else ""}</small>'
-                  f'{f"<small class=cold>{d} gündür ses yok</small>" if cold else ""}</a>')
-        if counts[st] > len(rows):
-            h += f'<a href="/leads?status={st}">+{counts[st] - len(rows)} daha…</a>'
-        h += "</div>"
-    h += "</div>"
+    live = "IFNULL(archived,0)=0"
+    data = {st: con.execute(f"SELECT * FROM companies WHERE status=? AND {live} ORDER BY (next_followup IS NULL), next_followup, starred DESC, score DESC", (st,)).fetchall()
+            for st in STAGES}
+    val = {st: sum(r["value_usd"] or 0 for r in data[st]) for st in STAGES}
+    open_st = STAGES[:-1]
+    pipe = sum(val[s] for s in open_st)
+    forecast = sum(val[s] * STAGE_PROB[s] / 100 for s in open_st)
+    active = sum(len(data[s]) for s in open_st)
+    won, lost = len(data["won"]), n(f"SELECT COUNT(*) FROM companies WHERE status='lost' AND {live}")
+    nurture = n(f"SELECT COUNT(*) FROM companies WHERE status='nurture' AND {live}")
     od = leads.open_deals(con)
     tons = sum(d["qty_t"] or 0 for d in od if d["kind"] == "quote")
-    tot_usd = sum(leads.deal_total_usd(d) for d in od if d["kind"] == "quote")
-    h += (f'<div class="sec" id="teklif" style="margin-top:22px"><div class="sh"><h2>Açık teklifler ve yoldaki numuneler</h2><span class="count">{len(od)}</span>'
-          f'<span class="muted sm">{f"{tons:g} ton · {money(tot_usd)} teklifte" if tons else ""}</span></div>')
+    h = head("Satış", "CRM'e kaydettiğin firmalar. Kartı sürükleyip bir sonraki aşamaya bırak; takip tarihleri kendiliğinden kurulur.",
+             f'<a class="btn ghost" href="/">{icon("users")} Firmalardan ekle</a>')
+    kpis = [("Açık fırsat değeri", money(pipe), f"{active} firma aktif"),
+            ("Ağırlıklı tahmin", money(forecast), "aşama olasılıklarıyla"),
+            ("Teklifteki miktar", f"{tons:g} ton" if tons else "—", f"{sum(1 for d in od if d['kind'] == 'quote')} açık teklif"),
+            ("Kazanılan", str(won), money(val["won"]) if val["won"] else "—"),
+            ("Kazanma oranı", f"%{100 * won // (won + lost)}" if won + lost else "—", f"{lost} kaybedilen")]
+    h += '<div class="kpis">' + "".join(f'<div class="kpi"><span>{k}</span><b>{v}</b><small>{s}</small></div>' for k, v, s in kpis) + "</div>"
+    # bugün yapılacaklar
+    base = f"SELECT * FROM companies c WHERE {live} AND status NOT IN ('won','lost') "
+    due_rows = con.execute(base + "AND next_followup<=? ORDER BY next_followup, score DESC LIMIT 12", (td,)).fetchall()
+    tasks = [t for t in leads.open_tasks(con) if (t["due"] or td) <= td]
+    exp = [d for d in od if d["kind"] == "quote" and d["valid_until"] and (days_from_today(d["valid_until"]) or 0) >= -3]
+    fb = [d for d in od if d["kind"] == "sample" and (days_from_today(d["created_at"]) or 0) >= 7]
+    todo = ""
+    for r in due_rows:
+        todo += (f'<div class="todo"><div><a href="/lead/{r["id"]}"><b>{esc(r["name"])}</b></a><small>{focus.flag(r["country"])} {esc(cname(r["country"]))} · '
+                 f'{STATUS_TR.get(r["status"], "")}</small></div>{due_chip(r, td)}<div class="act">'
+                 + quick_form(r["id"], "sent", "Mail attım", "mail", "/pipeline") + quick_form(r["id"], "called", "Aradım", "phone", "/pipeline")
+                 + quick_form(r["id"], "snooze", "Ertele", "clock", "/pipeline") + "</div></div>")
+    for t in tasks:
+        todo += (f'<div class="todo"><div><b>{esc(t["title"])}</b><small>{"<a href=/lead/" + str(t["company_id"]) + ">" + esc(t["name"]) + "</a>" if t["company_id"] else "genel görev"}</small></div>'
+                 f'<span class="due {"late" if (days_from_today(t["due"]) or 0) > 0 else "today"}">görev</span><div class="act">'
+                 f'<form class="pl" method="post" action="/task/{t["id"]}/done"><input type="hidden" name="back" value="/pipeline"><button class="ghost sm">{icon("check", 14)} Bitti</button></form></div></div>')
+    for d in exp:
+        todo += (f'<div class="todo"><div><a href="/lead/{d["company_id"]}"><b>{esc(d["name"])}</b></a><small>Teklif: {esc(d["product"] or "")}</small></div>'
+                 f'<span class="due late">teklif {esc(d["valid_until"])} bitiyor</span><div class="act"><a class="btn ghost sm" href="/lead/{d["company_id"]}">Aç</a></div></div>')
+    for d in fb:
+        todo += (f'<div class="todo"><div><a href="/lead/{d["company_id"]}"><b>{esc(d["name"])}</b></a><small>Numune: {esc(d["product"] or "")}</small></div>'
+                 f'<span class="due today">numune {ago(d["created_at"])}</span><div class="act"><a class="btn ghost sm" href="/lead/{d["company_id"]}">Geri bildirim sor</a></div></div>')
+    if todo:
+        h += f'<div class="card todos" style="margin-bottom:18px"><h3>{icon("today")} Bugün yapılacaklar</h3>{todo}</div>'
+    if not active and not won:
+        return "Satış", h + ('<div class="card empty">Henüz CRM\'de firma yok. <a href="/">Firmalar</a> sayfasında beğendiğin firmalara '
+                             '<b>CRM\'e kaydet</b> de; burada aşama aşama takip edersin.</div>'), "/pipeline"
+    # pano
+    h += '<div class="board">'
+    for st in STAGES:
+        rows = data[st]
+        h += (f'<div class="col" data-status="{st}" style="--c:{STATUS_COLOR[st]}"><div class="colhead"><b>{STATUS_TR[st]}</b><span>{len(rows)}</span>'
+              f'<small>{money(val[st]) if val[st] else "—"}{f" · olasılık %{STAGE_PROB[st]}" if st != "won" else ""}</small></div>')
+        for r in rows[:40]:
+            ld = days_from_today(r["last_contacted"])
+            prod = f'<span>{esc(r["product"])}</span>' if r["product"] else ""
+            h += (f'<a class="pcard" draggable="true" data-id="{r["id"]}" href="/lead/{r["id"]}"><div class="pc-top">{monogram(r)}<div><b>{"★ " if r["starred"] else ""}{esc(r["name"])}</b>'
+                  f'<small>{focus.flag(r["country"])} {esc(cname(r["country"]))}</small></div></div>'
+                  f'<div class="pc-mid">{score_badge(r["score"] or 0)}'
+                  f'{"<b class=val>" + money(r["value_usd"]) + "</b>" if r["value_usd"] else ""}{prod}</div>'
+                  f'<div class="pc-foot">{due_chip(r, td) if st != "won" else ""}<small>{f"son temas {ld} gün önce" if ld is not None else "henüz temas yok"}</small></div></a>')
+        if len(rows) > 40:
+            h += f'<a class="more" href="/leads?status={st}">+{len(rows) - 40} firma daha</a>'
+        h += "</div>"
+    h += "</div>"
+    if lost or nurture:
+        h += (f'<p class="muted sm" style="margin-top:6px">Pano dışında: <a href="/leads?status=lost">{lost} kaybedilen</a> · '
+              f'<a href="/leads?status=nurture">{nurture} beklemede</a>. Bir kartı geri almak için firma sayfasından durumunu değiştir.</p>')
+    h += (f'<div class="sec" id="teklif" style="margin-top:24px"><div class="sh"><h2>Açık teklifler ve yoldaki numuneler</h2><span class="count">{len(od)}</span></div>')
     h += deal_rows(od, "/pipeline") or '<div class="card flat muted">Açık teklif ya da numune yok. Firma sayfasındaki <b>Teklif ver</b> / <b>Numune gönder</b> ile kaydet.</div>'
-    return "Satış hattı", h + "</div>", "/pipeline"
+    return "Satış", h + "</div>", "/pipeline"
+
+# ------------------------------------------------------------------ Firmalar (ana ekran)
+HUB_PAGE = 30
+GENERIC_REASON = ("Site henüz taranmadı", "Firma tipi belirlenemedi", "Web sitesi ve iletişim")
 
 
-# ------------------------------------------------------------------ Firmalar
+def firm_row(r, back):
+    cid = r["id"]
+    try:
+        reasons = [x for x in json.loads(r["fit_reasons"] or "[]") if not x.startswith(GENERIC_REASON)]
+    except ValueError:
+        reasons = []
+    why = " · ".join(x.replace("Kanıt: ", "🍫 ") for x in reasons[:3])
+    new = (days_from_today(r["created_at"]) or 99) <= 7
+    tags = (('<span class="tag ok">Yeni bulundu</span>' if new else "") + ('<span class="tag cocoa">🍫 ürün kanıtlı</span>' if r["evidence"] else "")
+            + (pill(r["status"]) if r["status"] != "new" else ""))
+    contact = "".join(x for x in (
+        f'<span title="E-postası var">{icon("mail", 14)}</span>' if r["has_email"] else "",
+        f'<span title="Telefonu var">{icon("phone", 14)}</span>' if r["phone"] else "",
+        f'<span title="Kişi adı var">{icon("users", 14)}</span>' if r["has_person"] else ""))
+    site = (f'<a href="{esc(r["website"])}" target=_blank rel=noopener>{esc(leads.get_domain(r["website"]))}</a>' if r["website"]
+            else '<span class="muted">web sitesi yok</span>')
+    save = (quick_form(cid, "save", "CRM'e kaydet", "plus", back, "sm", "Satış hattına al") if r["status"] == "new"
+            else f'<a class="btn ghost sm" href="/pipeline">{icon("board", 14)} CRM\'de</a>')
+    acts = (save + f'<a class="btn ghost sm" href="/lead/{cid}#taslak">{icon("mail", 14)} E-posta</a>'
+            f'<form class="pl" method="post" action="/lead/{cid}/block" onsubmit="return confirm(\'{esc(r["name"])} engellensin mi? Silinir ve otomatik tarama bir daha bulmaz.\')">'
+            f'<input type="hidden" name="back" value="{esc(back)}"><button class="ghost sm danger-h" title="Engelle: bir daha bulunmasın">{icon("x", 14)} Engelle</button></form>')
+    return (f'<div class="frow">{monogram(r)}<div class="fmain"><div class="fhead"><a class="fname" href="/lead/{cid}">{esc(r["name"])}</a>{tags}</div>'
+            f'<div class="fsub">{focus.flag(r["country"])} {esc(cname(r["country"]))} · {esc(SEGMENT_TR.get(r["segment"], ""))} · {site}'
+            f'<span class="ficons">{contact}</span></div>'
+            f'{f"<div class=fwhy>{esc(why)}</div>" if why else ""}</div>'
+            f'<div class="fscore">{score_badge(r["score"] or 0)}</div><div class="fact">{acts}</div></div>')
+
+
+def page_firms(con, q):
+    g = lambda k: (q.get(k) or [""])[0].strip()  # noqa: E731
+    fc = leads.focus_countries()
+    fcs = ",".join(f"'{c}'" for c in fc)
+    view = g("v") if g("v") in ("crm", "all") else ""
+    w, p = [f"IFNULL(archived,0)=0", f"country IN ({fcs})"], []
+    if view == "":
+        w.append("status='new'")
+    elif view == "crm":
+        w.append("status<>'new'")
+    base_w = list(w)
+    cc = g("c").upper()
+    if cc in fc:
+        w.append("country=?")
+        p.append(cc)
+    if g("q"):
+        w.append("(name LIKE ? OR domain LIKE ? OR city LIKE ? OR name_gloss LIKE ?)")
+        p += [f"%{g('q')}%"] * 4
+    if g("e"):
+        w.append("id IN (SELECT company_id FROM contacts WHERE email_ok=1)")
+    if g("k"):
+        w.append("evidence IS NOT NULL")
+    where = " AND ".join(w)
+    order = "id DESC" if g("s") == "yeni" else "score DESC, id DESC"
+    total = con.execute(f"SELECT COUNT(*) FROM companies WHERE {where}", p).fetchone()[0]
+    pages = max(1, -(-total // HUB_PAGE))
+    page = min(max(int(g("page")) if g("page").isdigit() else 1, 1), pages)
+    rows = con.execute(f"SELECT c.*, (SELECT 1 FROM contacts k WHERE k.company_id=c.id AND k.email_ok=1 LIMIT 1) has_email, "
+                       f"(SELECT 1 FROM contacts k WHERE k.company_id=c.id AND IFNULL(k.name,'')<>'' LIMIT 1) has_person FROM companies c "
+                       f"WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?", p + [HUB_PAGE, (page - 1) * HUB_PAGE]).fetchall()
+    by_cc = dict(con.execute(f"SELECT country, COUNT(*) FROM companies WHERE {' AND '.join(base_w)} GROUP BY country").fetchall())
+    n_all = sum(by_cc.values())
+    n_crm = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND country IN ({fcs}) AND status<>'new'").fetchone()[0]
+    n_new = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND country IN ({fcs}) AND status='new'").fetchone()[0]
+    back = "/" + build_qs(q)
+    h = head("Firmalar", f"Sistemin {len(fc)} odak pazarda bulduğu, kakao alabilecek firmalar. Puana göre sıralı; tıkla, incele, CRM'e kaydet ya da engelle.",
+             f'<a class="btn ghost" href="/firsatlar.xlsx">{icon("download")} Excel</a><a class="btn ghost" href="/leads">Tablo / toplu işlem</a>'
+             f'<a class="btn" href="/add">{icon("plus")} Firma ekle</a>')
+    if "ADINIZ" in (leads.config().get("sender_name") or "ADINIZ"):
+        h += ('<div class="warnbar"><b>E-posta imzan eksik.</b> Taslaklarda "ADINIZ SOYADINIZ" yazıyor: '
+              '<a href="/settings">Ayarlar → Firma ve imza bilgileri</a>.</div>')
+    h += auto_status(con)
+    seg = lambda v, label, n: (f'<a class="{"on" if view == v else ""}" href="/{build_qs(q, v=v or None, page=None)}">{label} <b>{n}</b></a>')  # noqa: E731
+    h += '<div class="segtabs">' + seg("", "Yeni adaylar", n_new) + seg("crm", "CRM'dekiler", n_crm) + seg("all", "Tümü", n_new + n_crm) + "</div>"
+    tabs = f'<a class="{"on" if not cc else ""}" href="/{build_qs(q, c=None, page=None)}">Tüm ülkeler <b>{n_all}</b></a>'
+    for c in sorted(fc, key=lambda c: -by_cc.get(c, 0)):
+        tabs += f'<a class="{"on" if cc == c else ""}" href="/{build_qs(q, c=c, page=None)}">{focus.flag(c)} {esc(cname(c))} <b>{by_cc.get(c, 0)}</b></a>'
+    h += f'<div class="chiptabs">{tabs}</div>'
+    hidden = "".join(f'<input type="hidden" name="{k}" value="{esc(g(k))}">' for k in ("v", "c") if g(k))
+    h += (f'<form class="hubfilter" method="get">{hidden}<input name="q" value="{esc(g("q"))}" placeholder="Firma, site, şehir ara…">'
+          f'<label class="chip"><input type="checkbox" name="e" value="1"{" checked" if g("e") else ""} onchange="this.form.submit()"> {icon("mail", 14)} e-postası var</label>'
+          f'<label class="chip"><input type="checkbox" name="k" value="1"{" checked" if g("k") else ""} onchange="this.form.submit()"> 🍫 ürün kanıtlı</label>'
+          f'<select name="s" onchange="this.form.submit()">{opts([("", "Puana göre"), ("yeni", "Yeni bulunanlar önce")], g("s"))}</select>'
+          f'<button class="ghost">{icon("search", 14)} Ara</button></form>')
+    if not rows:
+        msg = ("Bu görünümde firma yok." if total == 0 and (g("q") or g("e") or g("k") or cc) else
+               "Henüz firma yok. Otomatik tarama çalıştıkça firmalar buraya düşer; durum yukarıdaki çubukta.")
+        return "Firmalar", h + f'<div class="card empty">{msg}</div>', "/"
+    h += f'<p class="muted sm" style="margin:0 0 8px">{total} firma · sayfa {page}/{pages}</p><div class="flist">' + "".join(firm_row(r, back) for r in rows) + "</div>"
+    if pages > 1:
+        nums = [i for i in range(1, pages + 1) if i in (1, pages) or abs(i - page) <= 2]
+        pg, last = "", 0
+        for i in nums:
+            if i - last > 1:
+                pg += "<span>…</span>"
+            pg += f'<span class="cur">{i}</span>' if i == page else f'<a href="/{build_qs(q, page=str(i))}">{i}</a>'
+            last = i
+        h += f'<div class="pager">{pg}</div>'
+    return "Firmalar", h, "/"
+
+
 def build_qs(q, **over):
     d = {k: v[0] for k, v in q.items() if v and v[0] and k != "msg"}
     for k, v in over.items():
@@ -727,7 +930,7 @@ def page_leads(con, q):
     bulk_ops = ('<option value="">Toplu işlem seç…</option><option value="star">★ Yıldızla</option><option value="unstar">Yıldızı kaldır</option>' +
                 "".join(f'<option value="status:{s}">Durum → {STATUS_TR[s]}</option>' for s in STATUSES) +
                 "".join(f'<option value="segment:{k}">Segment → {v}</option>' for k, v in SEGMENT_TR.items()) +
-                '<option value="archive">🗄 Arşive kaldır</option><option value="unarchive">Arşivden çıkar</option><option value="delete">🗑 Sil</option>')
+                '<option value="archive">🗄 Arşive kaldır</option><option value="unarchive">Arşivden çıkar</option><option value="block">🚫 Engelle (bir daha bulunmasın)</option><option value="delete">🗑 Sil</option>')
     h += (f'<div id="bulkbar"><b><span id="bulkn">0</span> firma seçili</b><select name="do">{bulk_ops}</select><button>Uygula</button></div></form>')
     if pages > 1:
         nums = [i for i in range(1, pages + 1) if i in (1, pages) or abs(i - page) <= 2]
@@ -881,7 +1084,8 @@ def page_lead(con, cid, q):
     if c["archived"]:
         h += '<div class="warnbar">Bu firma <b>arşivde</b>: Bugün, Fırsatlar ve Satış hattında görünmez. Yanlışsa aşağıdan <b>Arşivden çıkar</b>.</div>'
     phone = c["phone"] or next((k["phone"] for k in con.execute("SELECT phone FROM contacts WHERE company_id=? AND phone IS NOT NULL", (cid,))), None)
-    acts = [f'<a class="btn" href="#taslak">{icon("mail")} E-posta yaz</a>']
+    acts = [quick_form(cid, "save", "CRM'e kaydet", "plus", back, "") if c["status"] == "new" else "",
+            f'<a class="btn{" ghost" if c["status"] == "new" else ""}" href="#taslak">{icon("mail")} E-posta yaz</a>']
     if phone:
         acts.append(f'<a class="btn ghost" href="tel:{esc(phone)}">{icon("phone")} Ara</a>')
     if c["whatsapp"]:
@@ -955,7 +1159,7 @@ def page_lead(con, cid, q):
           f'<select name="lang">{opts([(x, lang_tr.get(x, x.upper())) for x in langs], lang)}</select><select name="tpl">{opts([(x, tpl_tr[x]) for x in tpls], tpl)}</select>'
           f'<button class="ghost">Göster</button></form>{mail}</div>')
     h += facts_card(c)
-    h += f"""<details class="card"><summary>Düzenle, arşivle, sil</summary><form method="post" action="/lead/{cid}/update" class="grid" style="gap:10px;margin-top:12px">
+    h += f"""<details class="card"><summary>Düzenle, arşivle, engelle</summary><form method="post" action="/lead/{cid}/update" class="grid" style="gap:10px;margin-top:12px">
 <div><label>Firma adı</label><input name="name" value="{esc(c['name'])}" required style="width:100%"></div>
 <div><label>Web sitesi</label><input name="website" value="{esc(c['website'] or '')}" style="width:100%"></div>
 <div class="row2"><div><label>Ülke</label><select name="country" style="width:100%">{opts([(k, focus.flag(k) + ' ' + cname(k)) for k in sorted(set(leads.focus_countries()) | ({c['country']} - {None}), key=lambda k: tr_key(cname(k)))], c['country'], '—')}</select></div>
@@ -970,7 +1174,7 @@ def page_lead(con, cid, q):
 <form class="pl" method="post" action="/lead/{cid}/archive"><button class="ghost" title="Uygun değilse listelerden kaldırır; silmez">{icon("archive")} {"Arşivden çıkar" if c["archived"] else "Arşivle"}</button></form>
 <form class="pl" method="post" action="/suppress" onsubmit="return confirm('Bu firmaya bir daha yazılmayacak. Emin misiniz?')"><input type="hidden" name="value" value="{esc(c['domain'] or '')}"><input type="hidden" name="back" value="{back}">
 <button class="ghost" {"disabled" if not c['domain'] else ""}>Bir daha yazma</button></form>
-<form class="pl" method="post" action="/lead/{cid}/delete" onsubmit="return confirm('Bu firma kişileri ve geçmişiyle birlikte silinecek ve sonraki taramalarda tekrar eklenmeyecek. Silinsin mi?')"><button class="danger">{icon("trash")} Sil</button></form>
+<form class="pl" method="post" action="/lead/{cid}/block" onsubmit="return confirm('Firma engellensin mi? Silinir, e-posta engeline eklenir ve otomatik tarama bir daha bulmaz.')"><button class="danger">{icon("x")} Engelle (bir daha bulunmasın)</button></form>
 </div></details></div></div>"""
     return c["name"], h, "/leads"
 
@@ -1087,7 +1291,10 @@ def page_settings(con, q):
                f'<div class="row2">{fld("company_name", "Firma adı")}{fld("website", "Web sitesi")}</div>'
                f'{fld("products", "Ürünler (İngilizce, e-postada geçer)")}{fld("certifications", "Sertifikalar (İngilizce)", "ISO 22000, Halal, Kosher")}'
                f'{fld("postal_address", "Posta adresi (e-posta altına yasal zorunluluk)")}<br><button>Kaydet</button></form>')
-    h = head("Ayarlar", "İsteğe bağlı ücretsiz servisler: ne kadar çok tanımlarsan sistem o kadar çok firma bulur ve o kadar iyi çevirir. Anahtarlar bu bilgisayarda <code>secrets.json</code> dosyasında saklanır.")
+    h = head("Ayarlar", "Otomatik tarama, odak pazarlar, e-posta imzası ve isteğe bağlı servisler.")
+    h += f'<div class="card" style="margin-bottom:16px"><h3>{icon("zap")} Otomatik tarama</h3>' + auto_status(con, tools=True)
+    h += ('<p class="muted sm" style="margin:0">Tarama sürekli çalışır: her turda sıradaki ülkelerin kaynaklarını (haftada bir) ve sitelerini tarar, puanlar, Türkçe gerekçe yazar. '
+          '<a href="/tools">Gelişmiş araçlar ve ayrıntılı kayıt</a> · <a href="/markets">Pazar verisi (Comtrade)</a></p></div>')
     on = cfg.get("auto_scan", True)
     allc = sorted(COUNTRIES, key=lambda k: (k not in focus.PROFILE, tr_key(COUNTRIES[k][0])))
     fc = set(leads.focus_countries())
@@ -1096,8 +1303,14 @@ def page_settings(con, q):
           f'<p class="muted" style="margin-top:0">Sistem yalnızca işaretli ülkelerde firma arar, listeler ve puanlar. Diğer ülkelerdeki firmalar silinmez, arşive kalkar.</p>'
           f'<details><summary>Ülkeleri seç ({len(fc)} seçili)</summary><div class="chips">{chips}</div></details>'
           f'<label class="chip" style="max-width:520px;margin-top:10px"><input type="checkbox" name="auto_scan" value="1"{" checked" if on else ""}> '
-          f'Otomatik tarama: her gün sıradaki {leads.AUTO_BATCH} ülkede yeni firma bul, sitelerini tara, puanla</label><br><button>Kaydet</button></form>')
+          f'Otomatik tarama açık: sürekli olarak sıradaki {leads.AUTO_BATCH} ülkede yeni firma bul, sitelerini tara, puanla</label><br><button>Kaydet</button></form>')
     h += company
+    blocked = con.execute("SELECT name, MIN(deleted_at) t FROM ignored GROUP BY name ORDER BY t DESC LIMIT 200").fetchall()
+    h += f'<div class="card" style="margin-bottom:16px" id="engel"><h3>Engellenen firmalar <span class="count">{len(blocked)}</span></h3>'
+    h += ('<p class="muted" style="margin-top:0">Engellediğin firmaları otomatik tarama bir daha eklemez. Yanlışlıkla engellediysen kaldırabilirsin.</p>' +
+          ("".join(f'<div class="tk"><div class="t">{esc(b["name"])}<small>{esc((b["t"] or "")[:10])}</small></div><form class="pl" method="post" action="/unblock">'
+                   f'<input type="hidden" name="name" value="{esc(b["name"])}"><button class="ghost sm">Engeli kaldır</button></form></div>' for b in blocked)
+           or '<p class="muted" style="margin:0">Engellenen firma yok.</p>') + "</div>")
     h += f'<div class="card" style="margin-bottom:16px"><h3>1 · Arama motoru (Google\'a yazmanın otomatiği) {"✔ " + prov if prov else ""}</h3>'
     h += ('<p class="muted" style="margin-top:0">Ülke × sektör × yerel dilde yüzlerce arama yapar ("Keks Hersteller Deutschland", "fabricant biscuits France"...) ve çıkan firma sitelerini aday olarak alır. '
           'Arama sonuç sayfalarını kazımaz; resmî API kullanır. <b>Birini</b> tanımlamanız yeterli.</p>')
@@ -1193,8 +1406,8 @@ def page_tools(con, q):
     prov = leads.discover.provider()
     disc_note = (f"✔ {prov} anahtarı tanımlı." if prov else 'Önce <a href="/settings">Ayarlar</a> sayfasından ücretsiz bir arama anahtarı ekleyin.')
     fcs = ",".join(leads.focus_countries())
-    h = head("Firma bul", "Sistem her gün kendiliğinden tarar; burada beklemeden elle de başlatabilirsin. Sonuç: Fırsatlar sayfası.") + status
-    h += auto_status(con).replace("</div></div>", f'</div><form method="post" action="/job/auto" style="margin-left:auto"><button class="sm" {dis}>{icon("zap", 14)} Şimdi bir tur çalıştır</button></form></div>', 1) + cov_html
+    h = head("Gelişmiş tarama araçları", "Sistem sürekli kendiliğinden tarar; burada tek bir adımı elle çalıştırabilir, ayrıntılı kaydı görebilirsin.") + status
+    h += auto_status(con, tools=True) + cov_html
     if n_junk:
         h += (f'<form class="warnbar" method="post" action="/job/cleanup" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap"><div style="flex:1;min-width:260px">'
               f'<b>{n_junk} firma alıcı değil</b> gibi görünüyor: ' + ", ".join(f"{esc(l)} ({k})" for l, k in junk if k) +
@@ -1246,44 +1459,55 @@ Büyük fabrikalar için fuar listelerini <a href="/import">Liste yükle</a> say
 
 
 # ------------------------------------------------------------------ iş yürütme
-def auto_status(con):
+def auto_status(con, tools=False):
+    """Otomatik taramanın canlı durumu: şu an hangi ülke ve adım, son tur sonucu, varsa hata."""
     on = leads.config().get("auto_scan", True)
-    last, summary = leads.meta_get(con, "auto_last"), leads.meta_get(con, "auto_summary")
+    g = lambda k: leads.meta_get(con, k) or ""  # noqa: E731
     running = JOB["running"] and JOB["name"].startswith("Otomatik")
     fc = leads.focus_countries()
-    i = int(leads.meta_get(con, "auto_next", 0) or 0) % max(len(fc), 1)
+    i = int(g("auto_next") or 0) % max(len(fc), 1)
     nxt = ", ".join(cname(fc[(i + k) % len(fc)]) for k in range(min(leads.AUTO_BATCH, len(fc))))
+    week = con.execute("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND created_at>=datetime('now','-7 day')").fetchone()[0]
     if running:
-        txt = f"<b>Otomatik tarama şu an çalışıyor.</b> <a href='/tools'>İlerlemeyi gör</a>"
+        lines = [l.strip() for l in JOB["log"].strip().split("\n") if l.strip() and not l.startswith("===")]
+        last = lines[-1][:110] if lines else "başlıyor…"
+        txt = (f"<b>Şu an taranıyor: {esc(g('auto_now'))}</b> · {esc(g('auto_step'))}"
+               f"<br><small class='muted'>{esc(last)}</small>")
     elif on:
-        txt = (f"<b>Otomatik tarama açık.</b> Son tur: {esc(last or 'henüz yok')}{' · ' + esc(summary) if summary else ''}. "
-               f"Sıradaki: {esc(nxt)}.")
+        txt = (f"<b>Otomatik tarama açık.</b> Son tur {esc(g('auto_last') or 'henüz yok')}"
+               f"{' · ' + esc(g('auto_summary')) if g('auto_summary') else ''}. Sıradaki: {esc(nxt)} (en geç {AUTO_PAUSE_MIN} dk içinde)."
+               f"<br><small class='muted'>Son 7 günde {week} yeni firma eklendi.</small>")
     else:
         txt = "<b>Otomatik tarama kapalı.</b> <a href='/settings'>Ayarlar</a>'dan açabilirsin."
-    return f'<div class="autobar"><span class="dot{" run" if running else "" if on else " off"}"></span><div>{txt}</div></div>'
+    err = g("auto_error")
+    if err:
+        txt += f"<br><small class='late'>Son turda sorun: {esc(err[:300])}</small>"
+    btn = (f'<form method="post" action="/job/auto"><button class="sm ghost" {"disabled" if JOB["running"] else ""}>{icon("zap", 14)} Şimdi tara</button></form>'
+           if tools and on else "")
+    return f'<div class="autobar"><span class="dot{" run" if running else "" if on else " off"}"></span><div>{txt}</div>{btn}</div>'
 
 
-AUTO_EVERY_H = 20  # bir önceki turdan en az bu kadar saat sonra yeni tur
+AUTO_PAUSE_MIN = 30  # bir tur bitince sıradaki ülkelere geçmeden önce bu kadar dakika ara
 
 
 def auto_loop():
-    """Arka planda: otomatik tarama açıksa ve son turdan beri AUTO_EVERY_H saat geçtiyse sıradaki ülkeleri tarar. Elle başlatılan iş varsa bekler."""
+    """Arka planda sürekli: otomatik tarama açıksa, son tur AUTO_PAUSE_MIN dakikadan önce bittiyse sıradaki ülkeleri tarar.
+    Elle başlatılmış bir iş varsa bitmesini bekler. Hiçbir hata döngüyü durdurmaz."""
     import time
-    time.sleep(int(os.environ.get("AUTO_DELAY", "300")))  # açılışta 5 dk bekle
+    time.sleep(int(os.environ.get("AUTO_DELAY", "120")))  # açılışta kısa bekle
     while True:
         try:
             con = leads.db()
             last = leads.meta_get(con, "auto_last")
             con.close()
-            due = not last or (dt.datetime.now() - dt.datetime.strptime(last, "%Y-%m-%d %H:%M")).total_seconds() >= AUTO_EVERY_H * 3600
+            due = not last or (dt.datetime.now() - dt.datetime.strptime(last, "%Y-%m-%d %H:%M")).total_seconds() >= AUTO_PAUSE_MIN * 60
             if leads.config().get("auto_scan", True) and due and not JOB["running"]:
                 def cycle():
                     JOB["summary"] = leads.auto_cycle(lambda m: print(m, flush=True))
                 run_job("Otomatik tarama", cycle)
         except Exception as e:  # zamanlayıcı asla durmasın
             print("Otomatik tarama hatası:", e, flush=True)
-        time.sleep(600)
-
+        time.sleep(60)
 
 def run_job(name, fn):
     with JOB_LOCK:
@@ -1444,7 +1668,7 @@ class H(BaseHTTPRequestHandler):
                     return self._send(200, fh.read(), STATIC[u.path[8:]], {"Cache-Control": "public, max-age=86400"})
             if u.path in ("/firsatlar.xlsx", "/firsatlar.csv"):
                 return self._export_opps(q, u.path.endswith("xlsx"))
-            routes = {"/": page_today, "/firsatlar": page_opps, "/settings": page_settings, "/pipeline": page_pipeline, "/leads": page_leads, "/add": page_add, "/import": page_import,
+            routes = {"/": page_firms, "/bugun": page_today, "/firsatlar": page_opps, "/settings": page_settings, "/pipeline": page_pipeline, "/leads": page_leads, "/add": page_add, "/import": page_import,
                       "/markets": page_markets, "/tools": page_tools}
             if u.path in routes:
                 title, body, act = routes[u.path](con, q)
@@ -1525,6 +1749,9 @@ class H(BaseHTTPRequestHandler):
                 return self._redirect("/settings", "Anahtar silindi")
             secrets_util.save({k: v for k, v in f.items() if k in secrets_util.KEYS})
             return self._redirect("/settings", "Kaydedildi")
+        if path == "/unblock":
+            leads.unblock(con, f.get("name", ""))
+            return self._redirect("/settings#engel", "Engel kaldırıldı; firma sonraki taramalarda yeniden bulunabilir")
         if path == "/suppress":
             if f.get("value"):
                 leads.cmd_suppress(argparse.Namespace(value=f["value"]))
@@ -1534,6 +1761,9 @@ class H(BaseHTTPRequestHandler):
             op, back = f.get("do", ""), f.get("back") or "/leads"
             if not ids or not op:
                 return self._redirect(back, "Hiçbir şey seçilmedi")
+            if op == "block":
+                leads.backup_db(force=True)
+                return self._redirect(back, f"{leads.block_companies(con, ids)} firma engellendi; bir daha bulunmayacak")
             if op == "delete":
                 leads.backup_db(force=True)  # toplu silmeden önce güvenlik yedeği
                 return self._redirect(back, f"{leads.delete_companies(con, ids)} firma silindi (yedek alındı)")
@@ -1624,6 +1854,9 @@ class H(BaseHTTPRequestHandler):
                 back, do = f.get("back") or here, f.get("do")
                 if do == "snooze":
                     return self._redirect(back, f"Takip {leads.snooze(con, cid, 3)} tarihine ertelendi")
+                if do == "save":
+                    leads.do_log(con, cid, "note", "CRM'e kaydedildi", status="saved")
+                    return self._redirect(back, "CRM'e kaydedildi · Satış sekmesinde")
                 if do == "skip":
                     leads.do_log(con, cid, "note", "Uygun değil olarak işaretlendi", status="lost")
                     con.execute("UPDATE companies SET lost_reason='uygun değil' WHERE id=?", (cid,))
@@ -1685,6 +1918,12 @@ class H(BaseHTTPRequestHandler):
                 leads.backup_db(force=True)
                 leads.delete_companies(con, [cid])
                 return self._redirect("/leads", "Firma silindi (yedek alındı)")
+            if act == "block":
+                name = con.execute("SELECT name FROM companies WHERE id=?", (cid,)).fetchone()[0]
+                leads.backup_db(force=True)
+                leads.block_companies(con, [cid])
+                back = f.get("back") or "/"
+                return self._redirect("/" if back.startswith(here) else back, f"{name} engellendi; bir daha bulunmayacak")
             if act == "contact":
                 leads.add_contact(con, cid, f.get("name") or None, f.get("role") or None, f.get("email") or None, f.get("phone") or None, None, "manuel")
                 con.commit()

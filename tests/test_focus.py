@@ -112,22 +112,47 @@ class T(unittest.TestCase):
     def test_auto_cycle_rotates_countries(self):
         calls = []
         names = ("cmd_seed", "cmd_harvest_products", "cmd_harvest_wikidata", "cmd_harvest_osm", "cmd_enrich", "cmd_score", "cmd_translate", "cmd_cleanup")
-        saved = {n: getattr(leads, n) for n in names}
+        saved = {n: getattr(leads, n) for n in names + ("net_ok",)}
         for n in names:
             setattr(leads, n, lambda a, n=n: calls.append((n, getattr(a, "country", None) or getattr(a, "countries", None))))
+        leads.net_ok = lambda: (True, "")
+        runs = []
         try:
-            leads.auto_cycle(lambda m: None)
-            first = [c for n, c in calls if n == "cmd_harvest_products"]
-            calls.clear()
-            leads.auto_cycle(lambda m: None)
-            second = [c for n, c in calls if n == "cmd_harvest_products"]
+            for _ in range(3):
+                calls.clear()
+                leads.auto_cycle(lambda m: None)
+                runs.append(([c for n, c in calls if n == "cmd_harvest_products"], [c for n, c in calls if n == "cmd_enrich"]))
         finally:
             for n, f in saved.items():
                 setattr(leads, n, f)
-        self.assertEqual(first, ["RU,EG,MA"])
-        self.assertEqual(second, ["AZ,RU,EG"])  # sıra döner
+        self.assertEqual([r[0] for r in runs], [["RU,EG"], ["MA,AZ"], []])  # sıra döner; RU ve EG bu hafta tarandığı için 3. turda atlanır
+        self.assertTrue(all(r[1] == [FC] for r in runs))  # site taraması her turda tüm odak ülkelerde sürer
         con = leads.db()
         self.assertIn("yeni firma", leads.meta_get(con, "auto_summary"))
+        self.assertEqual((leads.meta_get(con, "auto_step"), leads.meta_get(con, "auto_error")), ("", ""))
+        con.close()
+
+    def test_auto_cycle_reports_no_network(self):
+        orig = leads.net_ok
+        leads.net_ok = lambda: (False, "search.openfoodfacts.org: CERTIFICATE_VERIFY_FAILED")
+        try:
+            self.assertIn("Bağlantı yok", leads.auto_cycle(lambda m: None))
+        finally:
+            leads.net_ok = orig
+        con = leads.db()
+        self.assertIn("CERTIFICATE_VERIFY_FAILED", leads.meta_get(con, "auto_error"))
+        self.assertTrue(leads.meta_get(con, "auto_last"))  # döngü bir sonraki denemeyi beklesin
+        con.close()
+
+    def test_block_prevents_rediscovery(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Spam Foods", "RU", None, "https://spam-foods.ru", "other", "osm")
+        con.commit()
+        leads.block_companies(con, [cid])
+        self.assertEqual(leads.upsert_company(con, "Spam Foods", "RU", None, "https://spam-foods.ru", "other", "osm"), (None, False))
+        self.assertTrue(leads.is_suppressed(con, domain="spam-foods.ru"))
+        leads.unblock(con, "Spam Foods")
+        self.assertIsNotNone(leads.upsert_company(con, "Spam Foods", "RU", None, "https://spam-foods.ru", "other", "osm")[0])
         con.close()
 
 

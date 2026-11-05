@@ -46,7 +46,7 @@ SEGMENTS = {  # segment: (taban puan, e-posta metninde geçen etiket)
     "retail_craft": (10, "chocolate and confectionery"),
     "other": (5, "the food industry"),
 }
-STATUSES = ["new", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]
+STATUSES = ["new", "saved", "contacted", "replied", "sample", "negotiation", "won", "lost", "nurture"]  # saved: CRM'e kaydedildi, henüz yazılmadı
 FOLLOWUP_DAYS = {"email": 5, "call": 7, "sample": 10, "meeting": 7, "quote": 5, "note": None}
 
 COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
@@ -167,6 +167,22 @@ def ignore_keys(name, country, domain):
     if name:
         keys.append(f"n:{name.strip().lower()}|{(country or '').upper()}")
     return keys
+
+
+def block_companies(con, ids):
+    """Engelle: firmayı siler, adını/alan adını engel listesine ve e-posta engeline ekler; otomatik tarama bir daha eklemez."""
+    for r in con.execute(f"SELECT domain FROM companies WHERE id IN ({','.join('?' * len(ids))}) AND IFNULL(domain,'')<>''", ids).fetchall():
+        con.execute("INSERT OR IGNORE INTO suppressed(value) VALUES(?)", (r[0],))
+    return delete_companies(con, ids)
+
+
+def unblock(con, name):
+    """Engeli kaldırır: firma sonraki taramalarda yeniden bulunabilir."""
+    for (key,) in con.execute("SELECT key FROM ignored WHERE name=?", (name,)).fetchall():
+        if key.startswith("d:"):
+            con.execute("DELETE FROM suppressed WHERE value=?", (key[2:],))
+    con.execute("DELETE FROM ignored WHERE name=?", (name,))
+    con.commit()
 
 
 def delete_companies(con, ids):
@@ -1200,45 +1216,93 @@ def meta_set(con, key, value):
     con.commit()
 
 
-AUTO_BATCH = 3  # her otomatik turda taranan ülke sayısı (sırayla döner)
+AUTO_BATCH = 2  # her otomatik turda taranan ülke sayısı (sırayla döner; tur bitince kısa aradan sonra sıradakiler)
+SOURCE_DAYS = 7  # bir ülkenin kaynakları (ürün, Wikidata, harita) en sık bu kadar günde bir yeniden taranır
+NET_CHECK = ["https://search.openfoodfacts.org/search?q=cocoa&page_size=1", "https://www.wikidata.org/w/api.php?action=query&format=json"]
+
+
+def net_ok():
+    """Sunucu dış kaynaklara (açık veri servisleri) ulaşabiliyor mu? (True, '') ya da (False, hata)."""
+    err = ""
+    for url in NET_CHECK:
+        try:
+            crawler.fetch(url, timeout=20)
+            return True, ""
+        except Exception as e:
+            err = f"{urllib.parse.urlparse(url).hostname}: {str(e)[:120]}"
+    return False, err
 
 
 def auto_cycle(log=print):
     """Komut beklemeden çalışan tur: sıradaki ülkelerde hazır liste → ürün kanıtı → Wikidata → harita → site taraması → puan → çeviri → arşiv.
-    Ülkeler sırayla döner; her gün farklı 3 ülke, yeni firmalar ve eksik iletişim bilgileri tamamlanır."""
+    Ülkeler sırayla döner; tur bitince kısa bir aradan sonra sıradaki ülkelerle devam eder. Her adım ekranda canlı görünür."""
     N = argparse.Namespace
     con = db()
     fc = focus_countries()
     i = int(meta_get(con, "auto_next", 0) or 0) % max(len(fc), 1)
     batch = [fc[(i + k) % len(fc)] for k in range(min(AUTO_BATCH, len(fc)))]
     before = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    names = ", ".join(COUNTRIES[c][0] for c in batch)
+    meta_set(con, "auto_started", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    meta_set(con, "auto_now", names)
+    meta_set(con, "auto_error", "")
+    ok, err = net_ok()
+    if not ok:  # en sık sorun: sunucunun dışarıya bağlantısı ya da SSL sertifikaları
+        meta_set(con, "auto_error", "Sunucu açık veri servislerine bağlanamıyor: " + err)
+        meta_set(con, "auto_step", "")
+        meta_set(con, "auto_last", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+        con.close()
+        log("Bağlantı yok, tur atlandı: " + err)
+        return "Bağlantı yok: " + err
     con.close()
-    cc = ",".join(batch)
-    log(f"Otomatik tarama: {', '.join(COUNTRIES[c][0] for c in batch)}")
+    log(f"Otomatik tarama: {names}")
+
+    def fresh_run(key, fn):
+        """Kaynak taramasını ülke başına haftada bir yapar (sürekli turda aynı servisleri boşuna yormamak için)."""
+        con = db()
+        todo = [c for c in batch if (meta_get(con, f"src_{key}_{c}") or "") < (dt.date.today() - dt.timedelta(days=SOURCE_DAYS)).isoformat()]
+        con.close()
+        if not todo:
+            log(f"  son {SOURCE_DAYS} günde tarandı, atlandı")
+            return
+        fn(",".join(todo))
+        con = db()
+        for c in todo:
+            meta_set(con, f"src_{key}_{c}", today())
+        con.close()
+
     steps = [("Hazır alıcı listesi", lambda: cmd_seed(N())),
-             ("Ürün kanıtı (etiketinde kakao olan markalar)", lambda: cmd_harvest_products(N(country=cc, pages=8))),
-             ("Wikidata gıda sanayi firmaları", lambda: cmd_harvest_wikidata(N(country=cc))),
-             ("Harita: fabrikalar (yerel dillerde)", lambda: cmd_harvest_osm(N(country=cc, segments=None))),
-             ("Arama motoru", lambda: cmd_discover(N(country=cc, segments="", max_queries=30)) if discover.provider() else log("  anahtar yok, atlandı")),
-             ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=batch))),
+             ("Ürün kanıtı (etiketinde kakao olan markalar)", lambda: fresh_run("off", lambda cc: cmd_harvest_products(N(country=cc, pages=8)))),
+             ("Wikidata gıda sanayi firmaları", lambda: fresh_run("wd", lambda cc: cmd_harvest_wikidata(N(country=cc)))),
+             ("Harita: fabrikalar (yerel dillerde)", lambda: fresh_run("osm", lambda cc: cmd_harvest_osm(N(country=cc, segments=None)))),
+             ("Arama motoru", lambda: fresh_run("web", lambda cc: cmd_discover(N(country=cc, segments="", max_queries=30)))
+              if discover.provider() else log("  anahtar yok, atlandı")),
+             ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=fc))),
              ("Puanlama ve çeviri", lambda: (cmd_score(N()), cmd_translate(N(limit=40, min_score=50)))),
              ("Alıcı olmayanları arşive kaldırma", lambda: cmd_cleanup(N()))]
-    for title, fn in steps:
+    errors = []
+    for k, (title, fn) in enumerate(steps, 1):
         if CANCEL.is_set():
             log("Durduruldu.")
             break
+        con = db()
+        meta_set(con, "auto_step", f"{k}/{len(steps)} {title}")
+        con.close()
         log(f"\n=== {title} ===")
         try:
             fn()
         except Exception as e:  # bir adımın hatası turu durdurmasın
             log(f"  ! {e}")
+            errors.append(f"{title}: {str(e)[:120]}")
     con = db()
     after = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     good = con.execute("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND score>=55 AND created_at>=datetime('now','-1 day')").fetchone()[0]
-    summary = f"{', '.join(COUNTRIES[c][0] for c in batch)}: {after - before} yeni firma, {good} tanesi güçlü aday (55+)"
+    summary = f"{names}: {after - before} yeni firma, {good} tanesi güçlü aday (55+)"
     meta_set(con, "auto_next", (i + len(batch)) % max(len(fc), 1))
     meta_set(con, "auto_last", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
     meta_set(con, "auto_summary", summary)
+    meta_set(con, "auto_step", "")
+    meta_set(con, "auto_error", " · ".join(errors))
     con.close()
     log(summary)
     return summary
@@ -1428,7 +1492,7 @@ def do_log(con, cid, kind, summary, status=None, followup=None):
     if kind in ("email", "call", "sample", "meeting"):
         sets.append("last_contacted=?")
         p.append(today())
-    status = status or ("contacted" if kind in ("email", "call") and cur[0] == "new" else None)
+    status = status or ("contacted" if kind in ("email", "call") and cur[0] in ("new", "saved") else None)
     if status:
         sets.append("status=?")
         p.append(status)
@@ -1452,7 +1516,7 @@ def snooze(con, cid, days=3):
 # ---------------------------------------------------------------- teklif, numune, görev
 DEAL_PRODUCTS = ["Kakao tozu (doğal)", "Kakao tozu (alkalize)", "Kakao yağı", "Kakao hamuru (liquor)", "Kuvertür / kompunt çikolata", "Diğer"]
 INCOTERMS = ["EXW", "FCA", "FOB", "CFR", "CIF", "DAP", "DDP"]
-STATUS_ORDER = {s: i for i, s in enumerate(["new", "contacted", "replied", "sample", "negotiation", "won"])}
+STATUS_ORDER = {s: i for i, s in enumerate(["new", "saved", "contacted", "replied", "sample", "negotiation", "won"])}
 
 
 def fx_usd(currency):

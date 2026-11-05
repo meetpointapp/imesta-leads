@@ -10,11 +10,17 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 3. **Nasıl ulaşırım?** → Site tarama ile e-posta/telefon, puanlama
 4. **Takip** → Kayıt, hatırlatma, e-posta şablonları, rapor
 
+## Üç ekran
+
+- **Firmalar** (ana sayfa): otomatik taramanın bulduğu firmalar, puana göre. Ülke çipleri, "Yeni adaylar / CRM'dekiler / Tümü", e-postası olan ve ürün kanıtlı filtreleri. Her satırda neden potansiyel olduğu, web sitesi, iletişim simgeleri ve üç düğme: **CRM'e kaydet**, **E-posta**, **Engelle** (firma silinir ve otomatik tarama bir daha bulmaz; Ayarlar → Engellenen firmalar'dan geri alınır). Üstte taramanın canlı durumu: şu an hangi ülke, hangi adım, son tur sonucu, varsa hata.
+- **Satış**: CRM'e kaydedilen firmalar aşama aşama (CRM'de → İletişimde → Yanıt verdi → Numune → Pazarlık → Kazanıldı). Açık fırsat değeri, aşama olasılıklarıyla ağırlıklı tahmin, teklifteki miktar, kazanma oranı; bugün yapılacak takipler, görevler, süresi dolan teklifler; açık teklif ve numuneler.
+- **Ayarlar**: otomatik tarama durumu ve "Şimdi tara", odak ülkeler, imza bilgileri, engellenen firmalar, isteğe bağlı servis anahtarları, gelişmiş araçlar ve pazar verisi.
+
 ## Odak pazarlar ve otomatik tarama
 
 Sistem yalnızca **odak ülkelerde** çalışır: Rusya, Belarus, Azerbaycan, İran, Irak, Suriye, Ürdün, Mısır, Fas, Cezayir (Ayarlar → Odak pazarlar'dan değişir). Bu ülkeler dışındaki firmalar silinmez, arşive kalkar.
 
-- **Otomatik tarama:** sunucuda panel açık olduğu sürece her gün kendiliğinden bir tur atar; her turda sıradaki 3 ülke (sırayla döner): İmesta hazır alıcı listesi (`data/seed_focus.csv`, bilinen kakao kullanıcıları) → ürün etiketinde kakao olan markalar → Wikidata gıda sanayi firmaları → haritada fabrikalar (Rusça, Arapça, Farsça, Azerice, Fransızca adlarla) → sitelerden iletişim → puan ve Türkçe gerekçe → alıcı olmayanları arşive kaldırma. Bugün ekranında son tur ve sıradaki ülkeler görünür; "Firma bul" sayfasından beklemeden de çalıştırılabilir. Komut satırı: `py leads.py auto`.
+- **Otomatik tarama:** sunucuda panel açık olduğu sürece sürekli çalışır: bir tur bitince 30 dakika sonra sıradaki 2 ülkeye geçer. Ülke kaynakları (ürün, Wikidata, harita) haftada bir yenilenir, site taraması ve puanlama her turda sürer. Adımlar: İmesta hazır alıcı listesi (`data/seed_focus.csv`, bilinen kakao kullanıcıları) → ürün etiketinde kakao olan markalar → Wikidata gıda sanayi firmaları → haritada fabrikalar (Rusça, Arapça, Farsça, Azerice, Fransızca adlarla) → sitelerden iletişim → puan ve Türkçe gerekçe → alıcı olmayanları arşive kaldırma. Bugün ekranında son tur ve sıradaki ülkeler görünür; "Firma bul" sayfasından beklemeden de çalıştırılabilir. Komut satırı: `py leads.py auto`.
 - **Pazar notu:** her firmanın sayfasında ülkesine göre yazışma dili, lojistik, ödeme, Türkiye ile ticaret anlaşması, belgeler ve satış ipucu (`focus.py`). Mevzuat ve yaptırımlar değişir; sevkiyat öncesi banka ve gümrük müşavirinizle teyit edin.
 - **E-posta alıcının dilinde:** Rusça (RU, BY), Fransızca (MA, DZ), Arapça (EG, JO, IQ, SY), Türkçe (AZ), İngilizce (IR). Teklifler İmesta'nın gerçek ürün kodlarıyla: alkalize İ8, İ9, İ10, İ12, MS10; doğal İ6; CB-İ50 kakao yağı; CMS-i20 / CMS-i60 kakao likörü.
 - **Firma sayfası:** uygunluk halkası, "Neden potansiyel?" (Türkçe gerekçeler), ne teklif edileceği, kime yazılacağı, notlar, teklif/numune, görevler, geçmiş. Telefon ve tablette alt menüyle çalışır.
