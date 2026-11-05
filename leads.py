@@ -28,6 +28,7 @@ import crawler  # noqa: E402
 import translate  # noqa: E402
 import discover  # noqa: E402
 import products  # noqa: E402
+import focus  # noqa: E402
 import xlsx  # noqa: E402
 import secrets_util  # noqa: E402
 DB_PATH = os.environ.get("LEADS_DB", os.path.join(HERE, "leads.db"))
@@ -65,6 +66,7 @@ COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
     "LT": ("Litvanya", "LTU"), "LV": ("Letonya", "LVA"), "EE": ("Estonya", "EST"), "UA": ("Ukrayna", "UKR"),
     "KZ": ("Kazakistan", "KAZ"), "AZ": ("Azerbaycan", "AZE"), "GE": ("Gürcistan", "GEO"), "IL": ("İsrail", "ISR"),
     "NG": ("Nijerya", "NGA"), "ZA": ("Güney Afrika", "ZAF"), "KE": ("Kenya", "KEN"), "PK": ("Pakistan", "PAK"),
+    "SY": ("Suriye", "SYR"), "BY": ("Belarus", "BLR"), "IR": ("İran", "IRN"),
     "BD": ("Bangladeş", "BGD"), "PH": ("Filipinler", "PHL"), "TH": ("Tayland", "THA"), "VN": ("Vietnam", "VNM"),
 }
 ISO2_TO_ISO3 = {k: v[1] for k, v in COUNTRIES.items()}
@@ -92,6 +94,9 @@ CREATE TABLE IF NOT EXISTS deals(  -- kind: quote (teklif) | sample (numune); st
   id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
   kind TEXT DEFAULT 'quote', product TEXT, qty_t REAL, price_kg REAL, currency TEXT DEFAULT 'USD', incoterm TEXT,
   valid_until TEXT, tracking TEXT, status TEXT DEFAULT 'open', note TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP, closed_at TEXT);
+CREATE TABLE IF NOT EXISTS notes(
+  id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+  body TEXT NOT NULL, created_at TEXT DEFAULT (datetime('now','localtime')));
 CREATE TABLE IF NOT EXISTS tasks(
   id INTEGER PRIMARY KEY, company_id INTEGER REFERENCES companies(id) ON DELETE CASCADE,
   title TEXT NOT NULL, due TEXT, done_at TEXT, created_at TEXT DEFAULT CURRENT_TIMESTAMP);
@@ -195,6 +200,27 @@ def save_config(updates):
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
         f.write("\n")
+
+
+def focus_countries():
+    """Odak pazarlar (Ayarlar'dan değiştirilebilir). Sistem yalnızca bu ülkelerde firma arar ve gösterir."""
+    return [c for c in (config().get("focus_countries") or focus.DEFAULT_FOCUS) if c in COUNTRIES]
+
+
+def upgrade_config():
+    """Eski varsayılan metinleri İmesta'nın gerçek bilgileriyle değiştirir (kullanıcının yazdıklarına dokunmaz)."""
+    cfg = config()
+    real = {"products": "alkalized cocoa powder (İ8, İ9, İ10, İ12, MS10), natural cocoa powder (İ6), deodorized cocoa butter (CB-İ50) and cocoa liquor (CMS-i20, CMS-i60)",
+            "certifications": "FSSC 22000, ISO 22000, ISO 9001, HACCP, Halal and Kosher certified",
+            "postal_address": "İmesta Food Lojistik Dış Ticaret Ltd. Şti., Şerifali Mah. Şehit Sok. No:50, Ümraniye, İstanbul, Türkiye",
+            "website": "https://imestafood.com", "company_name": "İmesta Food"}
+    old = {"products": "couverture", "certifications": "düzenleyin", "postal_address": "Şirket adresiniz", "website": "imestafood.com", "company_name": "Imesta Food"}
+    upd = {k: v for k, v in real.items() if old[k] in (cfg.get(k) or old[k]) and cfg.get(k) != v}
+    if upd.get("website") and cfg.get("website") not in ("https://imestafood.com", "http://imestafood.com", None, ""):
+        upd.pop("website")
+    if upd:
+        save_config(upd)
+    return upd
 
 
 def today():
@@ -320,7 +346,7 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
     return cid, new
 
 
-DIAL = {"DE": "49", "AT": "43", "CH": "41", "NL": "31", "BE": "32", "FR": "33", "GB": "44", "IT": "39", "ES": "34", "PL": "48", "RU": "7",
+DIAL = {"SY": "963", "BY": "375", "IR": "98", "DE": "49", "AT": "43", "CH": "41", "NL": "31", "BE": "32", "FR": "33", "GB": "44", "IT": "39", "ES": "34", "PL": "48", "RU": "7",
         "US": "1", "CA": "1", "AE": "971", "SA": "966", "EG": "20", "IQ": "964", "JO": "962", "LB": "961", "KW": "965", "QA": "974", "OM": "968",
         "MA": "212", "DZ": "213", "TN": "216", "LY": "218", "IN": "91", "CN": "86", "JP": "81", "KR": "82", "MY": "60", "ID": "62", "SG": "65",
         "AU": "61", "NZ": "64", "BR": "55", "MX": "52", "SE": "46", "DK": "45", "NO": "47", "FI": "358", "IE": "353", "PT": "351", "GR": "30",
@@ -445,34 +471,32 @@ def _emp_int(v):
 
 
 def suggest_offer(buyer, cats, evidence=None):
-    if evidence and buyer != "distributor":
-        ings = evidence.get("ingredients", [])
-        o = []
-        if "en:cocoa-powder" in ings:
-            o.append("ürünlerinde kullandığı kakao tozu (doğal / alkalize, %10-12 yağlı)")
-        if "en:cocoa-butter" in ings:
-            o.append("kakao yağı (deodorize / doğal)")
-        o.append("kuvertür / kompunt" if any(k in cats for k in ("biscuit", "wafer", "cake", "ice_cream")) else "kakao hamuru (liquor)")
-        return "Teklif: " + "; ".join(o) + " — mevcut tedarikçisine alternatif fiyat + ücretsiz numune"
+    """İmesta'nın gerçek ürün kodlarıyla teklif önerisi (İmesta çikolata üretmez; kakao tozu, yağı ve likörü satar)."""
     if buyer == "distributor":
-        return "Ambalajlı kakao tozu ve kakao yağı (25 kg çuval / big bag), özel etiket, depo stoklu teslimat"
+        return "Teklif: 25 kg torbada alkalize İ10 ve doğal İ6 kakao tozu, CB-İ50 kakao yağı; özel marka ve palet bazında fiyat"
     o = []
     if any(k in cats for k in ("ice_cream", "dairy", "beverage")):
-        o.append("alkalize, kolay çözünür kakao tozu + kuvertür/kompunt çikolata")
+        o.append("koyu renkli, iyi çözünen alkalize kakao tozu (İ10 / İ12)")
     if any(k in cats for k in ("biscuit", "wafer", "cake", "bakery")):
-        o.append("kakao tozu (%10-12 / %20-22 yağlı), kakao yağı, kompunt kaplama ve dolgu")
+        o.append("bisküvi ve kek için alkalize İ8 / İ9, dolgu için İ10 kakao tozu")
     if any(k in cats for k in ("chocolate", "confectionery")):
-        o.append("kakao yağı, kakao hamuru (liquor), kuvertür")
+        o.append("CB-İ50 deodorize kakao yağı ve CMS-i20 / CMS-i60 kakao likörü")
     if any(k in cats for k in ("cereal_snack", "spread")):
-        o.append("kakao tozu, kakao yağı, dolgu/ezme için kompunt")
-    return ("Teklif: " + "; ".join(o[:3])) if o else "Teklif: kakao tozu ve kakao yağı (numune + fiyat listesi)"
+        o.append("ezme ve kaplama için İ10 kakao tozu ve CB-İ50 kakao yağı")
+    if evidence and "en:cocoa-butter" in evidence.get("ingredients", []) and not any("CB-İ50" in x for x in o):
+        o.append("ürünlerinde kullandığı kakao yağı için CB-İ50")
+    if evidence and "en:cocoa-powder" in evidence.get("ingredients", []) and not any("kakao tozu" in x for x in o):
+        o.append("ürünlerinde kullandığı kakao tozu için alkalize İ10 ya da doğal İ6")
+    return ("Teklif: " + "; ".join(o[:3]) + " — TDS, COA ve ücretsiz numuneyle") if o else \
+        "Teklif: alkalize İ10 ve doğal İ6 kakao tozu, CB-İ50 kakao yağı — TDS ve ücretsiz numuneyle"
 
 
 def build_summary(c, cats, buyer):
     parts = [BUYER_TR.get(buyer or "unknown", "Sınıflanmadı")]
     rel = [CAT_TR[k] for k in crawler.USER_CATS if cats.get(k, 0) >= 2 and k in CAT_TR]
     if rel:
-        parts.append(", ".join(rel[:4]) + " ürünleri")
+        txt = ", ".join(rel[:4])
+        parts.append(txt if txt.endswith("ürünleri") else txt + " ürünleri")
     if c["employees"]:
         parts.append(f"~{c['employees']} çalışan")
     if c["founded"]:
@@ -617,15 +641,33 @@ def import_csv_text(con, text, source, segment=None):
 
 
 def cmd_seed(a):
-    """Hazır başlangıç listesini (bilinen kakao kullanıcısı sanayi ve distribütörler) içe aktarır."""
-    path = os.path.join(HERE, "data", "seed_buyers.csv")
+    """Odak pazarlardaki bilinen kakao kullanıcılarını (data/seed_*.csv) ekler; web sitesi olmayanların sitesini bulup doğrular."""
+    fc = set(focus_countries())
+    rows = []
+    for fn in ("seed_focus.csv", "seed_buyers.csv"):  # odak pazar listesi + eski Avrupa listesi (yalnızca odak ülkelerdekiler)
+        with open(os.path.join(HERE, "data", fn), newline="", encoding="utf-8-sig") as f:
+            rows += [r for r in csv.DictReader(f) if r["country"] in fc]
     con = db()
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        new, dup = import_csv_text(con, f.read(), "seed")
+    new, dup = import_csv_text(con, "name,country,website,segment,buyer_type,notes\n" + "".join(
+        ",".join('"' + (r[k] or "").replace('"', '""') + '"' for k in ("name", "country", "website", "segment", "buyer_type", "notes")) + "\n" for r in rows), "seed")
+    todo = con.execute("SELECT id, name, country FROM companies WHERE source='seed' AND IFNULL(website,'')='' AND IFNULL(enrich_v,0)<2").fetchall()
+    if todo:
+        print(f"{len(todo)} firmanın web sitesi aranıyor (Wikidata + alan adı, gıda sitesi doğrulamalı)…", flush=True)
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            sites = list(ex.map(lambda r: None if CANCEL.is_set() else products.find_site(re.sub(r"[«»]", "", r["name"]), r["country"]), todo))
+        found = 0
+        for r, site in zip(todo, sites):
+            if site:
+                try:
+                    con.execute("UPDATE companies SET website=?, domain=? WHERE id=?", (norm_url(site), get_domain(site), r["id"]))
+                    found += 1
+                except sqlite3.IntegrityError:
+                    pass
+        print(f"  {found} web sitesi bulundu.", flush=True)
     for r in con.execute("SELECT id FROM companies WHERE source='seed'").fetchall():
         refresh_derived(con, r["id"])
     con.commit()
-    print(f"Hazır liste: {new} yeni firma eklendi, {dup} zaten vardı/silinmişti. Sıradaki: siteleri tara (derin tarama) ve puanla.")
+    print(f"Hazır liste: {new} yeni firma eklendi, {dup} zaten vardı. Sıradaki: siteleri tara (derin tarama) ve puanla.")
 
 
 def cmd_import_csv(a):
@@ -646,6 +688,15 @@ OSM_FILTERS = {  # segment -> Overpass filtreleri. Varsayılan: kakao KULLANAN s
     "retail_craft": ['["shop"="chocolate"]', '["craft"="confectionery"]', '["shop"="confectionery"]'],
     "bakery_ingredient": ['["shop"="wholesale"]["wholesale"="food"]', '["shop"="pastry"]'],
 }
+OSM_LOCAL = {  # Overpass büyük/küçük harf duyarlılığı Latin dışında güvenilmez: ilk harfler iki türlü yazıldı
+    "biscuit_bakery": "[Пп]еченье|[Вв]афел|[Хх]лебозавод|[Хх]лебокомбинат|[Кк]рекер|بسكويت|معجنات|ويفر|بیسکویت|ویفر|کیک|[Pp]eçenye|[Bb]iscuiterie",
+    "chocolate_maker": "[Кк]ондитер|[Шш]околад|حلويات|شوكولا|شیرینی|شکلات|[Şş]irniyyat|[Qq]ənnadı|[Şş]okolad|[Cc]hocolaterie|[Cc]onfiserie",
+    "ice_cream": "[Мм]орожен|[Хх]ладокомбинат|مثلجات|بوظة|آيس ?كريم|بستنی|[Dd]ondurma|[Gg]lacier",
+    "dairy_beverage": "[Мм]олочн|[Мм]олокозавод|[Мм]олкомбинат|ألبان|البان|لبنیات|[Ss]üd |[Ll]aiterie",
+}
+for _seg, _rx in OSM_LOCAL.items():
+    OSM_FILTERS[_seg] = OSM_FILTERS[_seg] + [f'["man_made"="works"]["name"~"{_rx}"]', f'["industrial"]["name"~"{_rx}"]',
+                                             f'["building"="industrial"]["name"~"{_rx}"]']
 DEFAULT_OSM_SEGMENTS = ["biscuit_bakery", "chocolate_maker", "ice_cream", "dairy_beverage", "distributor"]
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter", "https://overpass.openstreetmap.fr/api/interpreter"]
@@ -698,17 +749,22 @@ def cmd_harvest_osm(a):
             log("Durduruldu.")
             break
         log(f"{cc}:")
-        n_cc = 0
+        n_cc = fails = 0
         for seg in segs:
             if CANCEL.is_set():
+                break
+            if fails >= 2:  # çok büyük ülke ya da harita sunucuları meşgul: turu boşa harcama, sonraki turda tekrar denenir
+                log(f"  {cc}: harita sunucuları yanıt vermiyor, bu ülkenin kalan sorguları sonraki tura bırakıldı")
                 break
             parts = "".join(f"nwr{flt}(area.a);" for flt in OSM_FILTERS[seg])
             q = (f'[out:json][timeout:120][maxsize:268435456];area["ISO3166-1"="{cc}"][admin_level=2]->.a;'
                  f'({parts});out tags center 3000;')
             try:
                 data = overpass(q, log)
+                fails = 0
             except Exception as e:
                 log(f"  {SEG_LABEL.get(seg, seg)}: BAŞARISIZ ({e})")
+                fails += 1
                 continue
             els = data.get("elements", [])
             named = [e for e in els if e.get("tags", {}).get("name")]
@@ -920,7 +976,7 @@ def cmd_translate(a):
     log = lambda m: print(m, flush=True)  # noqa: E731
     email = config().get("sender_email", "")
     email = email if re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email or "") else ""
-    rows = con.execute("SELECT id,description,lang,country FROM companies WHERE description IS NOT NULL AND description<>'' AND (desc_tr IS NULL OR desc_tr='') "
+    rows = con.execute("SELECT id,description,lang,country FROM companies WHERE IFNULL(archived,0)=0 AND description IS NOT NULL AND description<>'' AND (desc_tr IS NULL OR desc_tr='') "
                        "AND score>=? ORDER BY score DESC LIMIT ?", (int(getattr(a, "min_score", 0) or 40), int(getattr(a, "limit", 0) or 40))).fetchall()
     ok = fail = 0
     for r in rows:
@@ -957,12 +1013,69 @@ def wikidata_query(terms):
             "OPTIONAL { ?c wdt:P2002 ?tw . } OPTIONAL { ?c wdt:P2003 ?ig . } SERVICE wikibase:label { bd:serviceParam wikibase:language \"en\". } } LIMIT 4000")
 
 
+WD_COUNTRY_QUERY = """SELECT ?c ?cLabel ?site ?indLabel ?emp ?inc ?cityLabel WHERE {
+  VALUES ?cc { "%s" } ?country wdt:P297 ?cc . ?c wdt:P17 ?country . ?c wdt:P452 ?ind .
+  ?ind rdfs:label ?il . FILTER(LANG(?il) = "en" && REGEX(?il, "%s", "i"))
+  OPTIONAL { ?c wdt:P856 ?site . } OPTIONAL { ?c wdt:P1128 ?emp . } OPTIONAL { ?c wdt:P571 ?inc . } OPTIONAL { ?c wdt:P159 ?city . }
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "en,ru,fr,ar,fa,az". } } LIMIT 1500"""
+WD_INDUSTRY = ["food industry|confection|chocolate|cocoa|biscuit|bak|dairy|ice cream|snack|cereal|sweet|candy", "confection|chocolate|biscuit|dairy|ice cream"]
+WD_SKIP = re.compile(r"fast food|seafood|fish|pet food|restaurant|food service|meat|poultry|water|catering|retail|supermarket", re.I)
+
+
+def wikidata_country(cc, log):
+    """Bir ülkenin gıda sanayi firmaları (Wikidata). Büyük ülkelerde zaman aşımında dar sorguyla tekrar dener."""
+    for rx in WD_INDUSTRY:
+        q = WD_COUNTRY_QUERY % (cc, rx)
+        try:
+            req = urllib.request.Request("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q),
+                                         headers={"User-Agent": UA, "Accept": "application/sparql-results+json"})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                rows = json.loads(r.read().decode("utf-8", "replace"))["results"]["bindings"]
+        except Exception as e:
+            log(f"  {cc}: Wikidata yanıt vermedi ({str(e)[:60]}), daha dar sorgu deneniyor")
+            continue
+        seen = {}
+        for b in rows:
+            seen.setdefault(b["c"]["value"], b)
+        return list(seen.values())
+    return []
+
+
 def cmd_harvest_wikidata(a):
     """Wikidata'dan (ücretsiz, açık veri) çikolata/şekerleme/kakao/bisküvi sektöründeki bilinen firmaları web sitesi, ülke,
     çalışan sayısı, kuruluş yılı ve sosyal hesaplarıyla çeker. Büyük/orta ölçekli alıcıları bulmak için iyi bir kaynaktır."""
     con = db()
     log = lambda m: print(m, flush=True)  # noqa: E731
     only = {c.strip().upper() for c in (getattr(a, "country", "") or "").split(",") if c.strip()}
+    if only and only <= set(focus.PROFILE):  # odak pazarlar: ülke ülke gıda sanayi sorgusu
+        new = 0
+        for cc in sorted(only):
+            if CANCEL.is_set():
+                break
+            rows = [b for b in wikidata_country(cc, log) if not WD_SKIP.search(b.get("indLabel", {}).get("value", ""))]
+            v = lambda b, k: b.get(k, {}).get("value")  # noqa: E731
+            todo = [b for b in rows if not v(b, "site")]
+            with ThreadPoolExecutor(max_workers=8) as ex:
+                found = dict(zip([id(b) for b in todo], ex.map(lambda b: products.find_site(v(b, "cLabel"), cc), todo)))
+            n = 0
+            for b in rows:
+                name, site = v(b, "cLabel"), v(b, "site") or found.get(id(b))
+                if not name or re.fullmatch(r"Q\d+", name):
+                    continue
+                ind = (v(b, "indLabel") or "").lower()
+                seg = ("chocolate_maker" if re.search("chocolate|cocoa", ind) else "ice_cream" if "ice cream" in ind else "dairy_beverage" if re.search("dairy|beverage", ind)
+                       else "biscuit_bakery" if re.search("biscuit|bak", ind) else "confectionery" if re.search("confection|sweet|candy", ind) else "other")
+                cid, is_new = upsert_company(con, name, cc, v(b, "cityLabel"), site, seg, "wikidata")
+                if not cid:
+                    continue
+                fill_company(con, cid, city=v(b, "cityLabel"), employees=(v(b, "emp") or "").split(".")[0] or None, founded=(v(b, "inc") or "")[:4] or None)
+                update_data_score(con, cid)
+                n += is_new
+            con.commit()
+            new += n
+            log(f"  {cc}: Wikidata'da {len(rows)} gıda sanayi firması, {n} yeni")
+        log(f"Wikidata: {new} yeni firma.")
+        return
     q = wikidata_query(WIKIDATA_TERMS)
     try:
         req = urllib.request.Request("https://query.wikidata.org/sparql?format=json&query=" + urllib.parse.quote(q),
@@ -1034,8 +1147,9 @@ def cmd_harvest_products(a):
         for k, v in e["cats"].items():
             cats[k] = max(cats.get(k, 0), min(v * 2, 10))
         con.execute("UPDATE companies SET evidence=?, categories=?, buyer_type=CASE WHEN IFNULL(buyer_type,'unknown') IN ('unknown','retail','craft') "
-                    "THEN 'industrial' ELSE buyer_type END, segment=CASE WHEN segment IN ('other','retail_craft') THEN ? ELSE segment END, archived=0 WHERE id=?",
-                    (json.dumps(ev, ensure_ascii=False), json.dumps(cats), e["segment"], cid))
+                    "THEN 'industrial' ELSE buyer_type END, segment=CASE WHEN segment IN ('other','retail_craft') THEN ? ELSE segment END, "
+                    "archived=CASE WHEN ? THEN 0 ELSE archived END WHERE id=?",  # odak dışı firmayı (ör. Almanya'daki marka) geri getirme
+                    (json.dumps(ev, ensure_ascii=False), json.dumps(cats), e["segment"], (c["country"] or country) in focus_countries(), cid))
         refresh_derived(con, cid)
         new += is_new
         upd += not is_new
@@ -1047,22 +1161,91 @@ ARCHIVE_RULES = [  # (açıklama, koşul) — yalnızca henüz temas edilmemiş 
     ("perakende dükkân / kafe", "buyer_type='retail'"),
     ("kakao işleyici (rakip)", "buyer_type='competitor'"),
     ("haritadan gelen dükkân/butik (sanayi alıcısı değil)", "segment='retail_craft' AND IFNULL(buyer_type,'unknown') NOT IN ('industrial','distributor')"),
-    ("sitesi açılmayan, iletişimi olmayan", "enrich_error IS NOT NULL AND IFNULL(phone,'')='' AND NOT EXISTS("
+    # hazır listedeki bilinen alıcılar korunur: İran gibi ülkelerde siteler yurt dışından açılmayabilir
+    ("sitesi açılmayan, iletişimi olmayan", "enrich_error IS NOT NULL AND IFNULL(source,'')<>'seed' AND IFNULL(phone,'')='' AND NOT EXISTS("
      "SELECT 1 FROM contacts k WHERE k.company_id=companies.id AND k.email_ok=1)"),
 ]
 ARCHIVE_BASE = "IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND evidence IS NULL"
 
 
+def archive_rules():
+    """[(açıklama, tam koşul)]. Odak dışı ülkeler kanıtlı olsa da arşive gider; diğer kurallar kanıtlı ve yıldızlıları korur."""
+    fc = ",".join(f"'{c}'" for c in focus_countries())
+    rules = [("odak pazarlar dışındaki ülkeler", f"IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND IFNULL(country,'') NOT IN ({fc})")]
+    return rules + [(label, f"{ARCHIVE_BASE} AND ({cond})") for label, cond in ARCHIVE_RULES]
+
+
 def archive_candidates(con):
-    """[(açıklama, adet)] — arşive gidecek firmalar (kanıtlı alıcılar, yıldızlılar ve temas edilenler hiç arşivlenmez)."""
-    return [(label, con.execute(f"SELECT COUNT(*) FROM companies WHERE {ARCHIVE_BASE} AND ({cond})").fetchone()[0]) for label, cond in ARCHIVE_RULES]
+    """[(açıklama, adet)] — arşive gidecek firmalar (yıldızlılar ve temas edilenler hiç arşivlenmez)."""
+    return [(label, con.execute(f"SELECT COUNT(*) FROM companies WHERE {cond}").fetchone()[0]) for label, cond in archive_rules()]
 
 
 def auto_archive(con):
     """İşe yaramayan firmaları silmeden arşive kaldırır; Firmalar → Arşiv'den geri alınabilir. Arşivlenen sayıyı döner."""
-    n = sum(con.execute(f"UPDATE companies SET archived=1 WHERE {ARCHIVE_BASE} AND ({cond})").rowcount for _, cond in ARCHIVE_RULES)
+    n = sum(con.execute(f"UPDATE companies SET archived=1 WHERE {cond}").rowcount for _, cond in archive_rules())
     con.commit()
     return n
+
+
+# ---------------------------------------------------------------- otomatik tarama
+def meta_get(con, key, default=None):
+    con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    r = con.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return r[0] if r else default
+
+
+def meta_set(con, key, value):
+    con.execute("CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT)")
+    con.execute("INSERT INTO meta(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
+    con.commit()
+
+
+AUTO_BATCH = 3  # her otomatik turda taranan ülke sayısı (sırayla döner)
+
+
+def auto_cycle(log=print):
+    """Komut beklemeden çalışan tur: sıradaki ülkelerde hazır liste → ürün kanıtı → Wikidata → harita → site taraması → puan → çeviri → arşiv.
+    Ülkeler sırayla döner; her gün farklı 3 ülke, yeni firmalar ve eksik iletişim bilgileri tamamlanır."""
+    N = argparse.Namespace
+    con = db()
+    fc = focus_countries()
+    i = int(meta_get(con, "auto_next", 0) or 0) % max(len(fc), 1)
+    batch = [fc[(i + k) % len(fc)] for k in range(min(AUTO_BATCH, len(fc)))]
+    before = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    con.close()
+    cc = ",".join(batch)
+    log(f"Otomatik tarama: {', '.join(COUNTRIES[c][0] for c in batch)}")
+    steps = [("Hazır alıcı listesi", lambda: cmd_seed(N())),
+             ("Ürün kanıtı (etiketinde kakao olan markalar)", lambda: cmd_harvest_products(N(country=cc, pages=8))),
+             ("Wikidata gıda sanayi firmaları", lambda: cmd_harvest_wikidata(N(country=cc))),
+             ("Harita: fabrikalar (yerel dillerde)", lambda: cmd_harvest_osm(N(country=cc, segments=None))),
+             ("Arama motoru", lambda: cmd_discover(N(country=cc, segments="", max_queries=30)) if discover.provider() else log("  anahtar yok, atlandı")),
+             ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=batch))),
+             ("Puanlama ve çeviri", lambda: (cmd_score(N()), cmd_translate(N(limit=40, min_score=50)))),
+             ("Alıcı olmayanları arşive kaldırma", lambda: cmd_cleanup(N()))]
+    for title, fn in steps:
+        if CANCEL.is_set():
+            log("Durduruldu.")
+            break
+        log(f"\n=== {title} ===")
+        try:
+            fn()
+        except Exception as e:  # bir adımın hatası turu durdurmasın
+            log(f"  ! {e}")
+    con = db()
+    after = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
+    good = con.execute("SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND score>=55 AND created_at>=datetime('now','-1 day')").fetchone()[0]
+    summary = f"{', '.join(COUNTRIES[c][0] for c in batch)}: {after - before} yeni firma, {good} tanesi güçlü aday (55+)"
+    meta_set(con, "auto_next", (i + len(batch)) % max(len(fc), 1))
+    meta_set(con, "auto_last", dt.datetime.now().strftime("%Y-%m-%d %H:%M"))
+    meta_set(con, "auto_summary", summary)
+    con.close()
+    log(summary)
+    return summary
+
+
+def cmd_auto(a):
+    auto_cycle()
 
 
 def cmd_cleanup(a):
@@ -1105,6 +1288,9 @@ def score_company(con, c, imp):
     if ev:
         s += min(18, 8 + 2 * ev.get("n", 1))
         reasons.insert(0, "Kanıt: " + products.evidence_text(ev))
+    if not c["website"] and not ks and not c["phone"]:  # ulaşılamayan aday, ulaşılabilenlerin arkasında sıralansın
+        s -= 15
+        reasons.append("Web sitesi ve iletişim bilgisi henüz bulunamadı")
     rel = [k for k in crawler.USER_CATS if cats.get(k, 0) >= 2]
     if rel:
         s += min(14, 4 * len(rel))
@@ -1146,6 +1332,12 @@ def score_company(con, c, imp):
         s += 4
     if c["phone"] or any(k["phone"] for k in ks):
         s += 1
+    prof = focus.PROFILE.get(c["country"] or "")
+    if prof and (c["country"] in focus_countries()):
+        s += 4
+        reasons.append(f"Odak pazar: {COUNTRIES[c['country']][0]} · {prof['route'].split(';')[0]}")
+        if "Serbest Ticaret" in prof["deal"]:
+            reasons.append(f"Türkiye–{COUNTRIES[c['country']][0]} serbest ticaret anlaşması: EUR.1 ile gümrük avantajı olabilir")
     info = imp.get(ISO2_TO_ISO3.get(c["country"] or ""))
     if info:
         bonus = round(max(0, 25 - info[0]) * 0.5)
@@ -1337,6 +1529,14 @@ def open_deals(con, kind=None):
     return con.execute(sql + " ORDER BY IFNULL(d.valid_until,'9999'), d.created_at", p).fetchall()
 
 
+def add_note(con, cid, body):
+    body = (body or "").strip()
+    if not body:
+        raise ValueError("Not boş olamaz")
+    con.execute("INSERT INTO notes(company_id, body) VALUES(?,?)", (cid, body[:5000]))
+    con.commit()
+
+
 def add_task(con, title, due=None, cid=None):
     title = (title or "").strip()
     if not title:
@@ -1421,7 +1621,10 @@ def render_email(con, cid, lang="en", template="cold"):
         raise ValueError(f"Şablon yok: {lang}_{template}")
     k = best_contact(con, cid)
     name = k["name"] if k and k["name"] else None
-    greeting = (f"Dear {name}" if name else "Dear Sir or Madam") if lang == "en" else (f"Guten Tag {name}" if name else "Sehr geehrte Damen und Herren")
+    greeting = {"en": (f"Dear {name}", "Dear Sir or Madam"), "de": (f"Guten Tag {name}", "Sehr geehrte Damen und Herren"),
+                "ru": (f"Здравствуйте, {name}!", "Здравствуйте!"), "fr": (f"Bonjour {name}", "Madame, Monsieur"),
+                "ar": (f"السيد/السيدة {name} المحترم،", "السادة المحترمون،"), "tr": (f"Sayın {name}", "Merhaba")}.get(lang, ("Dear " + str(name), "Dear Sir or Madam"))
+    greeting = greeting[0] if name else greeting[1]
     seg = SEGMENTS.get(c["segment"], SEGMENTS["other"])[1]
     ctx = _Safe(config(), company=c["name"], contact=(name or ("Sir or Madam" if lang == "en" else "Damen und Herren")), greeting=greeting,
                 segment_label=seg, hook=email_hook(c, lang, seg))
@@ -1429,9 +1632,29 @@ def render_email(con, cid, lang="en", template="cold"):
         return (k["email"] if k else None), f.read().format_map(ctx)
 
 
+HOOK = {  # dil: (içerik adları {etiket: ad}, bağlaç, kanıtlı+örnekli, kanıtlı, kanıtsız)
+    "ru": ({"en:cocoa-powder": "какао-порошок", "en:cocoa-butter": "какао-масло"}, " и ",
+           "Мы обратили внимание, что {c} использует {i} в таких продуктах, как «{x}»", "Мы обратили внимание, что {c} использует {i}",
+           "Мы изучили продукцию {c}"),
+    "fr": ({"en:cocoa-powder": "de la poudre de cacao", "en:cocoa-butter": "du beurre de cacao"}, " et ",
+           "Nous avons remarqué que {c} utilise {i} dans des produits comme « {x} »", "Nous avons remarqué que {c} utilise {i}",
+           "Nous suivons avec intérêt les produits de {c}"),
+    "ar": ({"en:cocoa-powder": "مسحوق الكاكاو", "en:cocoa-butter": "زبدة الكاكاو"}, " و",
+           "لاحظنا أن {c} تستخدم {i} في منتجات مثل «{x}»", "لاحظنا أن {c} تستخدم {i}", "اطلعنا على منتجات {c}"),
+    "tr": ({"en:cocoa-powder": "kakao tozu", "en:cocoa-butter": "kakao yağı"}, " ve ",
+           "{c} firmasının «{x}» gibi ürünlerinde {i} kullandığını gördük", "{c} firmasının ürünlerinde {i} kullandığını gördük",
+           "{c} firmasının ürünlerini inceledik"),
+}
+
+
 def email_hook(c, lang, seg):
     """Giriş cümlesi. Ürün kanıtı varsa firmanın kendi ürününden söz eder (soğuk e-postada yanıt oranını en çok artıran şey)."""
     ev = load_evidence(c)
+    if lang in HOOK:
+        names, join, with_ex, with_ing, plain = HOOK[lang]
+        ings = join.join(names[x] for x in (ev or {}).get("ingredients", []) if x in names)
+        ex = (ev or {}).get("examples", [])[:1]
+        return (with_ex if ex else with_ing).format(c=c["name"], i=ings, x=ex[0] if ex else "") if ings else plain.format(c=c["name"])
     i = {"de": 2}.get(lang, 1)
     if ev and ev.get("ingredients"):
         ings = (" und " if lang == "de" else " and ").join(products.INGREDIENTS[x][i] for x in ev["ingredients"] if x in products.INGREDIENTS)
@@ -1609,6 +1832,7 @@ def main():
     s = add("harvest-products", cmd_harvest_products, "ürün etiketinde kakao geçen markaları bul (OpenFoodFacts, kanıtlı alıcılar)")
     s.add_argument("--country", required=True, help="ISO2 virgülle: DE,NL,PL"); s.add_argument("--pages", type=int, default=8)
     add("cleanup", cmd_cleanup, "dükkân/kafe/rakip gibi uygun olmayanları arşive kaldır (silmez)")
+    add("auto", cmd_auto, "otomatik tarama turunu şimdi çalıştır (sıradaki 3 odak ülke)")
     add("score", cmd_score, "firmaları puanla")
     s = add("list", cmd_list, "firmaları listele")
     s.add_argument("--status"); s.add_argument("--country"); s.add_argument("--segment")

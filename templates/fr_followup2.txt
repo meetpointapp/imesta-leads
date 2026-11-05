@@ -1,0 +1,11 @@
+Subject: Dernier message – échantillons de cacao pour {company}
+
+{greeting},
+
+Ceci est notre dernier message pour ne pas encombrer votre boîte. Si l'approvisionnement en cacao devient d'actualité (nouvelles recettes, pression sur les prix, second fournisseur), nous vous ferons une offre sous 24 heures.
+
+Cordialement,
+{sender_name}
+{sender_title} | {company_name} | {website}
+
+{postal_address} – répondez « désinscription » pour ne plus recevoir de messages.

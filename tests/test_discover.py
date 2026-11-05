@@ -31,6 +31,8 @@ class R:
 
 
 def setUpModule():  # bu modülün kendi veritabanı
+    leads.focus_countries = lambda: list(leads.COUNTRIES)  # eski testler: tüm ülkeler odakta
+    leads.products.find_site = lambda brand, cc: None  # testte ağa çıkılmaz
     leads.DB_PATH = os.path.join(tempfile.mkdtemp(), "d.db")
 
 

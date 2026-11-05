@@ -61,6 +61,8 @@ class R:
 
 
 def setUpModule():
+    leads.focus_countries = lambda: list(leads.COUNTRIES)  # eski testler: tüm ülkeler odakta
+    leads.products.find_site = lambda brand, cc: None  # testte ağa çıkılmaz
     leads.DB_PATH = os.path.join(tempfile.mkdtemp(), "w.db")
     secrets_util.PATH = os.path.join(tempfile.mkdtemp(), "secrets.json")
     leads.mail_domain_ok = lambda d: True
@@ -82,7 +84,7 @@ def setUpModule():
     sys.stdout = io.StringIO()
     leads.cmd_enrich(argparse.Namespace(limit=500, workers=8, pages=3, force=False))
     leads.cmd_score(argparse.Namespace())
-    leads.cmd_translate(argparse.Namespace(limit=30, min_score=30))
+    leads.cmd_translate(argparse.Namespace(limit=200, min_score=30))
     sys.stdout = out
     srv = ThreadingHTTPServer(("127.0.0.1", 8777), web.H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -190,11 +192,29 @@ class T(unittest.TestCase):
         cid = con.execute("SELECT id FROM companies WHERE domain='bahlsen.com'").fetchone()[0]
         s, b = get(f"/lead/{cid}")
         b = b.decode()
-        for needle in ("Alıcı mı?", "Neden potansiyel?", "Ne teklif edilir?", "Bisküvi, gofret ve kek üreticisi."):
+        for needle in ("Kakao kullanan üretici", "Neden potansiyel?", "Ne teklif edilir?", "Bisküvi, gofret ve kek üreticisi.", "Kime yazılır?"):
             self.assertIn(needle, b)
         s, b = get("/leads?buyer_type=competitor&arsiv=1")  # otopilot rakipleri arşive kaldırır
         self.assertIn("Valrhona", b.decode())
         self.assertNotIn("Bahlsen", b.decode())
+
+    def test_firm_page_notes_and_market(self):
+        con = leads.db()
+        cid, _ = leads.upsert_company(con, "Edita Food", "EG", None, None, "biscuit_bakery", "manuel")
+        con.commit()
+        con.close()
+        post(f"/lead/{cid}/note", [("body", "Fiyat beklentisi 6,8 $/kg, şu an Malezya'dan alıyor")])
+        s, b = get(f"/lead/{cid}")
+        b = b.decode()
+        for needle in ("Pazar notu: Mısır", "Arapça", "Malezya&#x27;dan alıyor", "Google'da ara", 'class="ring"', 'class="tabbar"', "/static/logo.svg"):
+            self.assertIn(needle, b)
+        con = leads.db()
+        nid = con.execute("SELECT id FROM notes WHERE company_id=?", (cid,)).fetchone()[0]
+        con.close()
+        post(f"/note/{nid}/delete", [("back", f"/lead/{cid}")])
+        self.assertNotIn("Fiyat beklentisi", get(f"/lead/{cid}")[1].decode())
+        r = orig_open(B + "/static/logo.svg")
+        self.assertEqual((r.status, r.headers.get("Content-Type")), (200, "image/svg+xml"))
 
     def test_base_path(self):  # sunucuda nginx arkasında /kakaocrm altında
         web.BASE_PATH = "/kakaocrm"

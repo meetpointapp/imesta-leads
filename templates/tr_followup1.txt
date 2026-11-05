@@ -1,0 +1,11 @@
+Subject: Ynt: Türkiye'den kakao ürünleri – {company}
+
+{greeting},
+
+Önceki mesajımı hatırlatmak istedim. Teknik ekibinizin kendi reçetenizde denemesi için ücretsiz kakao tozu numunesi (ör. alkalize İ10 ya da doğal İ6) ve güncel fiyat listemizi gönderebiliriz.
+
+{company} firmasında kakao alımlarıyla kim ilgileniyor, yönlendirebilir misiniz?
+
+Saygılarımla,
+{sender_name}
+{sender_title} | {company_name} | {website}

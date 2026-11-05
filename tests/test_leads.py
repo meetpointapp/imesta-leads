@@ -22,6 +22,8 @@ leads.time.sleep = lambda s: None
 
 
 def setUpModule():  # sahte ağ ve ayrı veritabanı sadece bu modülün testlerinde geçerli
+    leads.focus_countries = lambda: list(leads.COUNTRIES)  # eski testler: tüm ülkeler odakta
+    leads.products.find_site = lambda brand, cc: None  # testte ağa çıkılmaz
     leads.DB_PATH = os.path.join(tempfile.mkdtemp(), "t.db")
     crawler.crawl_site = lambda url, **kw: orig_crawl(url, max_pages=kw.get("max_pages", 8), delay=0, cancel=kw.get("cancel"), fetcher=fake(PAGES))
 

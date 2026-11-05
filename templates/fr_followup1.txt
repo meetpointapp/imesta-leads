@@ -1,0 +1,11 @@
+Subject: Re : Cacao depuis la Turquie – {company}
+
+{greeting},
+
+Je me permets de revenir vers vous. Nous pouvons vous envoyer gratuitement un échantillon de poudre de cacao (par exemple alcalinisée İ10 ou naturelle İ6) pour un essai dans votre recette, ainsi que notre liste de prix actuelle.
+
+Pourriez-vous m'indiquer qui s'occupe des achats de cacao chez {company} ?
+
+Cordialement,
+{sender_name}
+{sender_title} | {company_name} | {website}

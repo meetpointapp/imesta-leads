@@ -58,9 +58,10 @@ haribo kraft heinz coca-cola""".split("\n")
 EXCLUDE_WORDS = set("""lidl aldi rewe edeka kaufland carrefour tesco auchan penny netto rossmann mercadona hacendado biedronka migros
 nestle nesquik kitkat milka oreo cadbury toblerone ferrero kinder nutella twix snickers kellogg kellogg's unilever magnum
 langnese algida danone hershey hershey's lindt mondelez mentos perfetti barilla knorr nescafe nescafé jumbo ah huismerk glico pocky
-prince trader picnic allegro ulker ülker eti belvita winiary slimfast mcvitie's""".split())
+prince trader picnic allegro ulker ülker eti belvita winiary slimfast mcvitie's
+марс марс-рус нестле nestlé милка вкусвилл пятерочка пятёрочка магнит перекресток перекрёсток лента ашан дикси окей метро вкусвилла""".split())
 EXCLUDE_PHRASES = ["weight watchers", "private label", "eigen merk", "eigenmarke", "marque distributeur", "albert heijn", "j d gross", "j.d. gross", "j.d: gross", "j. d. gross", "cereal partners", "general mills", "fairglobe", "mars inc", "mars wrigley",
-                   "mulino bianco", "pavesi"]
+                   "mulino bianco", "pavesi", "alpen gold", "щедрая душа", "красная цена", "global village", "fine life", "моя цена", "каждый день"]
 
 
 def fold(s):
@@ -203,7 +204,12 @@ def _slugs(brand):
 # Metin fold() edilmiş (aksansız, küçük harf) aranır. "cookie" yok: her sitenin çerez uyarısında geçer.
 FOOD = re.compile(r"\b(food|lebensmittel|voeding|aliment\w*|nutrition|recipes?|rezepte?|recettes?|ricett\w*|recetas?|snacks?|chocolat\w*|schokolade|czekolad\w*|"
                   r"cacao|kakao|cocoa|biscuits?|kekse?|koek\w*|ciastk\w*|cakes?|kuchen|desserts?|dairy|molkerei|zuivel|ice ?cream|gelato|speiseeis|lody|"
-                  r"cereals?|musli|muesli|granola|bakery|backerei|bakkerij|piekarni\w*|confectionery|su(?:ß|ss)waren|snoep|dolci|pasticceria|gateaux?|wafers?|waffeln)\b")
+                  r"cereals?|musli|muesli|granola|bakery|backerei|bakkerij|piekarni\w*|confectionery|su(?:ß|ss)waren|snoep|dolci|pasticceria|gateaux?|wafers?|waffeln|"
+                  r"biscuiterie|confiserie|laiterie|patisserie|glaces?|"
+                  r"шоколад\w*|конфет\w*|кондитер\w*|печень\w*|вафл\w*|пряник\w*|мороженое|молоч\w*|какао|торт\w*|"
+                  r"شوكولا\w*|حلويات|بسكويت|كاكاو|ألبان|مثلجات|كعك|"
+                  r"شکلات|شیرینی|بیسکویت|کاکائو|لبنیات|بستنی|کیک|"
+                  r"şokolad|şirniyyat|qənnadı|peçenye|dondurma)\b")
 
 
 def food_terms(html):
@@ -218,7 +224,9 @@ def page_matches(brand, final_url, html):
     head = fold((html or "")[:20000])
     if PARKED.search(t) or PARKED.search(head[:3000]):
         return False
-    return (bool(tokens_of(brand)) and host_matches(brand, final_url) and any(w in t for w in tokens_of(brand)[:2])
+    # Başlıkta markanın Latin ya da yerel yazımı (Акконд, کاله…) geçmeli; sayfa gıda firmasına ait olmalı
+    names = tokens_of(brand)[:2] + [w for w in re.findall(r"\w{3,}", fold(brand)) if not w.isascii() and w not in GENERIC_WORDS]
+    return (bool(tokens_of(brand)) and host_matches(brand, final_url) and any(w in t for w in names)
             and len(food_terms(html)) >= 2)
 
 
@@ -226,8 +234,13 @@ def umlaut(s):
     return (s or "").lower().translate(str.maketrans({"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}))
 
 
+# Firma adında geçen ama markayı tanımlamayan kelimeler (alan adı eşleşmesinde atlanır: "Laiterie Soummam" → soummam)
+GENERIC_WORDS = {"gmbh", "und", "the", "and", "sas", "srl", "spa", "ltd", "laiterie", "biscuiterie", "chocolaterie", "confiserie", "groupe", "group",
+                 "food", "foods", "industries", "industrial", "industry", "company", "holding", "dairy", "chocolate", "factory", "фабрика", "кондитерская"}
+
+
 def tokens_of(brand):
-    return [w for w in re.findall(r"[a-z0-9]{3,}", fold(brand)) if w not in ("gmbh", "und", "the", "and", "sas", "srl", "spa", "ltd")]
+    return [w for w in re.findall(r"[a-z0-9]{3,}", fold(brand)) if w not in GENERIC_WORDS]
 
 
 # "Bakery" → bakery.com gibi genel kelime alan adları marka sitesi değildir.

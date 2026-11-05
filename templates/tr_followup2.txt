@@ -1,0 +1,11 @@
+Subject: Son mesaj – {company} için kakao numunesi
+
+{greeting},
+
+Gelen kutunuzu doldurmamak için bu son mesajım. Kakao alımı gündeme gelirse (yeni reçete, fiyat baskısı, ikinci tedarikçi), 24 saat içinde teklif hazırlarız.
+
+Saygılarımla,
+{sender_name}
+{sender_title} | {company_name} | {website}
+
+{postal_address} – mesaj almak istemiyorsanız "listeden çıkar" yazarak yanıtlayın.

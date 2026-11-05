@@ -1,0 +1,29 @@
+Subject: Türkiye'den kakao tozu, kakao yağı ve kakao likörü – {company}
+
+{greeting},
+
+Ben {sender_name}, {company_name} firmasından yazıyorum (İstanbul, 2002'den beri). Gana ve Fildişi Sahili çekirdeklerini işleyip Kafkasya, Orta Doğu ve Afrika'daki gıda üreticilerine tedarik ediyoruz:
+
+- alkalize kakao tozu İ8, İ9, İ10, İ12, MS10 ve doğal kakao tozu İ6
+- deodorize kakao yağı CB-İ50
+- kakao likörü CMS-i20 / CMS-i60
+
+{hook}; ek ya da alternatif bir kakao tedarikçisi arayıp aramadığınızı öğrenmek isterim.
+
+Sunduklarımız:
+- her partide teknik föy (TDS) ve analiz sertifikasıyla sabit kalite
+- 25 kg torba, big bag, özel marka; FCA/CPT/CIF fiyat
+- Türkiye'den kısa teslim süresi
+- {certifications}
+
+Teknik föy, fiyat teklifi ve ücretsiz numune göndermekten memnuniyet duyarız. Önümüzdeki hafta kısa bir görüşme sizin için uygun olur mu?
+
+Saygılarımla,
+{sender_name}
+{sender_title} | {company_name}
+{sender_email} | {sender_phone}
+{website}
+
+---
+{postal_address}
+Bu tek seferlik bir ticari yazışmadır. İleti almak istemiyorsanız "listeden çıkar" yazarak yanıtlayın.

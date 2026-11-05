@@ -10,6 +10,15 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 3. **Nasıl ulaşırım?** → Site tarama ile e-posta/telefon, puanlama
 4. **Takip** → Kayıt, hatırlatma, e-posta şablonları, rapor
 
+## Odak pazarlar ve otomatik tarama
+
+Sistem yalnızca **odak ülkelerde** çalışır: Rusya, Belarus, Azerbaycan, İran, Irak, Suriye, Ürdün, Mısır, Fas, Cezayir (Ayarlar → Odak pazarlar'dan değişir). Bu ülkeler dışındaki firmalar silinmez, arşive kalkar.
+
+- **Otomatik tarama:** sunucuda panel açık olduğu sürece her gün kendiliğinden bir tur atar; her turda sıradaki 3 ülke (sırayla döner): İmesta hazır alıcı listesi (`data/seed_focus.csv`, bilinen kakao kullanıcıları) → ürün etiketinde kakao olan markalar → Wikidata gıda sanayi firmaları → haritada fabrikalar (Rusça, Arapça, Farsça, Azerice, Fransızca adlarla) → sitelerden iletişim → puan ve Türkçe gerekçe → alıcı olmayanları arşive kaldırma. Bugün ekranında son tur ve sıradaki ülkeler görünür; "Firma bul" sayfasından beklemeden de çalıştırılabilir. Komut satırı: `py leads.py auto`.
+- **Pazar notu:** her firmanın sayfasında ülkesine göre yazışma dili, lojistik, ödeme, Türkiye ile ticaret anlaşması, belgeler ve satış ipucu (`focus.py`). Mevzuat ve yaptırımlar değişir; sevkiyat öncesi banka ve gümrük müşavirinizle teyit edin.
+- **E-posta alıcının dilinde:** Rusça (RU, BY), Fransızca (MA, DZ), Arapça (EG, JO, IQ, SY), Türkçe (AZ), İngilizce (IR). Teklifler İmesta'nın gerçek ürün kodlarıyla: alkalize İ8, İ9, İ10, İ12, MS10; doğal İ6; CB-İ50 kakao yağı; CMS-i20 / CMS-i60 kakao likörü.
+- **Firma sayfası:** uygunluk halkası, "Neden potansiyel?" (Türkçe gerekçeler), ne teklif edileceği, kime yazılacağı, notlar, teklif/numune, görevler, geçmiş. Telefon ve tablette alt menüyle çalışır.
+
 ## Windows'ta kurulum (5 dakika)
 
 1. Python kurun: https://www.python.org/downloads/ → indir → kurulumda **"Add python.exe to PATH"** kutusunu işaretleyin.

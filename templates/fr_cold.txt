@@ -1,0 +1,29 @@
+Subject: Poudre, beurre et masse de cacao depuis la Turquie – {company}
+
+{greeting},
+
+Je suis {sender_name}, de {company_name} (Istanbul, depuis 2002). Nous transformons des fèves du Ghana et de Côte d'Ivoire et livrons les industriels de l'agroalimentaire au Maghreb, au Moyen-Orient et en Afrique :
+
+- poudre de cacao alcalinisée İ8, İ9, İ10, İ12, MS10 et naturelle İ6
+- beurre de cacao désodorisé CB-İ50
+- masse de cacao CMS-i20 / CMS-i60
+
+{hook}, et je souhaitais savoir si vous recherchez un fournisseur de cacao complémentaire ou alternatif.
+
+Ce que nous proposons :
+- une qualité constante, fiche technique (TDS) et certificat d'analyse pour chaque lot
+- sacs de 25 kg, big bags, marque privée ; prix FOB/CFR/CIF
+- des délais courts depuis la Turquie
+- {certifications}
+
+Nous serions ravis de vous envoyer notre fiche technique, une offre de prix et des échantillons gratuits. Un court échange la semaine prochaine vous conviendrait-il ?
+
+Cordialement,
+{sender_name}
+{sender_title} | {company_name}
+{sender_email} | {sender_phone}
+{website}
+
+---
+{postal_address}
+Message professionnel unique. Si vous ne souhaitez plus être contacté, répondez « désinscription ».

@@ -16,13 +16,13 @@ import secrets_util
 
 UA = "ImestaFoodBot/1.0 (+https://imestafood.com)"
 
-LANG_OF = {"DE": "de", "AT": "de", "CH": "de", "LI": "de", "NL": "nl", "BE": "nl", "FR": "fr", "LU": "fr", "MA": "fr", "DZ": "fr", "TN": "fr", "IT": "it",
+LANG_OF = {"RU": "ru", "BY": "ru", "AZ": "az", "IR": "fa", "SY": "ar", "DE": "de", "AT": "de", "CH": "de", "LI": "de", "NL": "nl", "BE": "nl", "FR": "fr", "LU": "fr", "MA": "fr", "DZ": "fr", "TN": "fr", "IT": "it",
            "ES": "es", "MX": "es", "AR": "es", "CO": "es", "PT": "pt", "BR": "pt", "PL": "pl", "SA": "ar", "EG": "ar", "IQ": "ar", "JO": "ar", "LB": "ar",
            "KW": "ar", "QA": "ar", "OM": "ar", "LY": "ar"}
-COUNTRY_LOCAL = {"DE": "Deutschland", "AT": "Österreich", "CH": "Schweiz", "NL": "Nederland", "BE": "België", "FR": "France", "IT": "Italia", "ES": "España",
+COUNTRY_LOCAL = {"RU": "Россия", "BY": "Беларусь", "AZ": "Azərbaycan", "IR": "ایران", "SY": "سوريا", "DE": "Deutschland", "AT": "Österreich", "CH": "Schweiz", "NL": "Nederland", "BE": "België", "FR": "France", "IT": "Italia", "ES": "España",
                  "PL": "Polska", "PT": "Portugal", "BR": "Brasil", "MX": "México", "SA": "السعودية", "AE": "الإمارات", "EG": "مصر", "IQ": "العراق",
                  "JO": "الأردن", "KW": "الكويت", "QA": "قطر", "OM": "عمان", "LB": "لبنان", "MA": "Maroc", "DZ": "Algérie", "TN": "Tunisie", "LY": "ليبيا"}
-COUNTRY_EN = {"DE": "Germany", "NL": "Netherlands", "BE": "Belgium", "FR": "France", "GB": "United Kingdom", "IT": "Italy", "ES": "Spain", "PL": "Poland",
+COUNTRY_EN = {"SY": "Syria", "BY": "Belarus", "IR": "Iran", "DE": "Germany", "NL": "Netherlands", "BE": "Belgium", "FR": "France", "GB": "United Kingdom", "IT": "Italy", "ES": "Spain", "PL": "Poland",
               "RU": "Russia", "US": "USA", "CA": "Canada", "AE": "UAE", "SA": "Saudi Arabia", "EG": "Egypt", "IQ": "Iraq", "JO": "Jordan", "LB": "Lebanon",
               "KW": "Kuwait", "QA": "Qatar", "OM": "Oman", "MA": "Morocco", "DZ": "Algeria", "TN": "Tunisia", "LY": "Libya", "IN": "India", "CN": "China",
               "JP": "Japan", "KR": "South Korea", "MY": "Malaysia", "ID": "Indonesia", "SG": "Singapore", "AU": "Australia", "NZ": "New Zealand", "BR": "Brazil",
