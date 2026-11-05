@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import tempfile
 import threading
 import urllib.parse
@@ -1291,9 +1292,14 @@ def run_job(name, fn):
         JOB.update(running=True, name=name, log="", summary="")
         leads.CANCEL.clear()
 
-    class Live:  # çıktıyı iş sürerken sayfada gösterebilmek için anında JOB["log"]'a yazar
+    class Live:  # çıktıyı iş sürerken sayfada gösterebilmek için anında JOB["log"]'a yazar; sunucu kaydına (journalctl) da düşer
         def write(self, t):
             JOB["log"] += t
+            try:
+                sys.__stdout__.write(t)
+                sys.__stdout__.flush()
+            except Exception:
+                pass
             return len(t)
 
         def flush(self):
@@ -1716,7 +1722,7 @@ def main():
         n = leads.auto_archive(con)  # odak dışına çıkan ülkeler hemen listelerden kalkar
         con.close()
         if n:
-            print(f"{n} firma arşive kaldırıldı (odak dışı ya da alıcı değil)")
+            print(f"{n} firma arşive kaldırıldı (odak dışı ya da alıcı değil)", flush=True)
     except Exception as e:
         print("Ayarlar güncellenemedi:", e)
     try:
@@ -1733,7 +1739,7 @@ def main():
     if not srv:
         raise SystemExit("Boş port bulunamadı. --port ile başka bir port verin.")
     url = f"http://{a.host}:{srv.server_address[1]}"
-    print(f"Imesta Lead paneli: {url}  (kapatmak için Ctrl+C)")
+    print(f"Imesta Lead paneli: {url}  (kapatmak için Ctrl+C)", flush=True)
     if a.open:
         import webbrowser
         threading.Timer(1.0, webbrowser.open, [url]).start()
