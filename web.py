@@ -1974,6 +1974,9 @@ def main():
     try:
         leads.upgrade_config()
         con = leads.db()
+        if not leads.meta_get(con, "geo_v1"):  # bir kerelik: eski kayıtların ülkesini sitelerinden kontrol et
+            leads.cmd_fix_countries()
+            leads.meta_set(con, "geo_v1", leads.today())
         n = leads.auto_archive(con)  # odak dışına çıkan ülkeler hemen listelerden kalkar
         con.close()
         if n:

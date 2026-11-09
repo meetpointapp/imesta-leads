@@ -29,6 +29,7 @@ import translate  # noqa: E402
 import discover  # noqa: E402
 import products  # noqa: E402
 import focus  # noqa: E402
+import geo  # noqa: E402
 import xlsx  # noqa: E402
 import secrets_util  # noqa: E402
 DB_PATH = os.environ.get("LEADS_DB", os.path.join(HERE, "leads.db"))
@@ -65,7 +66,8 @@ COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
     "RS": ("Sırbistan", "SRB"), "RO": ("Romanya", "ROU"), "BG": ("Bulgaristan", "BGR"), "HU": ("Macaristan", "HUN"),
     "LT": ("Litvanya", "LTU"), "LV": ("Letonya", "LVA"), "EE": ("Estonya", "EST"), "UA": ("Ukrayna", "UKR"),
     "KZ": ("Kazakistan", "KAZ"), "AZ": ("Azerbaycan", "AZE"), "GE": ("Gürcistan", "GEO"), "IL": ("İsrail", "ISR"),
-    "NG": ("Nijerya", "NGA"), "ZA": ("Güney Afrika", "ZAF"), "KE": ("Kenya", "KEN"), "PK": ("Pakistan", "PAK"),
+    "CM": ("Kamerun", "CMR"), "CI": ("Fildişi Sahili", "CIV"), "GH": ("Gana", "GHA"), "EC": ("Ekvador", "ECU"), "SN": ("Senegal", "SEN"),
+    "TG": ("Togo", "TGO"), "BJ": ("Benin", "BEN"), "NG": ("Nijerya", "NGA"), "ZA": ("Güney Afrika", "ZAF"), "KE": ("Kenya", "KEN"), "PK": ("Pakistan", "PAK"),
     "SY": ("Suriye", "SYR"), "BY": ("Belarus", "BLR"), "IR": ("İran", "IRN"),
     "UZ": ("Özbekistan", "UZB"), "KG": ("Kırgızistan", "KGZ"), "TM": ("Türkmenistan", "TKM"), "TJ": ("Tacikistan", "TJK"), "MN": ("Moğolistan", "MNG"),
     "BD": ("Bangladeş", "BGD"), "PH": ("Filipinler", "PHL"), "TH": ("Tayland", "THA"), "VN": ("Vietnam", "VNM"),
@@ -635,10 +637,48 @@ def apply_enrichment(con, cid, res):
                 "enriched_at=?, enrich_pages=?, enrich_error=NULL, enrich_v=2 WHERE id=?",
                 (name, res["cocoa_signal"], res["business_type"], seg, buyer, json.dumps(cats, ensure_ascii=False), a.get("b2b", 0),
                  today(), len(res["pages"]), cid))
+    fix_country(con, cid)
     refresh_derived(con, cid)
     update_data_score(con, cid)
     con.commit()
     return stats
+
+
+def fix_country(con, cid):
+    """Sitedeki kanıtlara göre (alan adı, telefon kodu, e-posta, adres) ülkeyi düzeltir. (eski, yeni, gerekçe) ya da None döner."""
+    c = con.execute("SELECT country, website, domain, address, phone, whatsapp FROM companies WHERE id=?", (cid,)).fetchone()
+    if not c:
+        return None
+    ks = con.execute("SELECT email, phone FROM contacts WHERE company_id=?", (cid,)).fetchall()
+    old = (c["country"] or "").upper()
+    res = geo.detect(old, c["website"] or c["domain"], [k["email"] for k in ks if k["email"]],
+                     [p for p in [c["phone"], c["whatsapp"]] + [k["phone"] for k in ks] if p], c["address"], DIAL.get(old))
+    if not res:
+        return None
+    new, why = res
+    con.execute("UPDATE companies SET country=? WHERE id=?", (new, cid))
+    con.execute("INSERT INTO activities(company_id,kind,summary) VALUES(?,?,?)",
+                (cid, "note", f"Ülke düzeltildi: {COUNTRIES.get(old, (old or '—',))[0]} → {COUNTRIES.get(new, (new,))[0]} ({why})"))
+    return old, new, why
+
+
+def cmd_fix_countries(a=None):
+    """Tüm aktif firmalarda ülke kontrolü; odak dışına çıkanlar sonraki arşiv adımında listelerden kalkar."""
+    con = db()
+    rows = con.execute("SELECT id FROM companies WHERE IFNULL(archived,0)=0 AND (IFNULL(domain,'')<>'' OR IFNULL(phone,'')<>'' "
+                       "OR IFNULL(address,'')<>'' OR id IN (SELECT company_id FROM contacts))").fetchall()
+    moved = {}
+    for r in rows:
+        ch = fix_country(con, r["id"])
+        if ch:
+            moved[ch[1]] = moved.get(ch[1], 0) + 1
+    con.commit()
+    fc = set(focus_countries())
+    out = sum(n for cc, n in moved.items() if cc not in fc)
+    print(f"Ülke kontrolü: {len(rows)} firma, {sum(moved.values())} firmanın ülkesi düzeltildi"
+          + (f" ({', '.join(f'{COUNTRIES.get(k, (k,))[0]}: {v}' for k, v in sorted(moved.items(), key=lambda x: -x[1])[:8])})" if moved else "")
+          + (f"; {out} tanesi odak pazar dışında, arşive kalkacak." if out else "."), flush=True)
+    return moved
 
 
 # ---------------------------------------------------------------- komutlar
@@ -1177,8 +1217,7 @@ def cmd_harvest_products(a):
         if not site and e["n"] < 2:  # sitesi bulunamayan tek ürünlü markalar işe yaramaz
             continue
         dom = get_domain(site) if site else ""
-        tld = dom.rsplit(".", 1)[-1].upper() if dom else ""
-        country = tld if tld in COUNTRIES else cc
+        country = geo.tld_country(dom) or cc  # Mısır'da satılan bir marka Kamerunlu olabilir: sitesinin uzantısı ülkeyi söyler
         cid, is_new = upsert_company(con, e["brand"], country, None, site, e["segment"], "urun-kaniti",
                                      notes="Ürün etiketinde kakao: " + products.evidence_text(e))
         if not cid:
@@ -1316,6 +1355,7 @@ def auto_cycle(log=print):
               if discover.provider() else log("  anahtar yok, atlandı")),
              ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=fc))),
              ("Puanlama ve çeviri", lambda: (cmd_score(N()), cmd_translate(N(limit=40, min_score=50)))),
+             ("Ülke kontrolü (site, telefon kodu, adres)", lambda: cmd_fix_countries(N())),
              ("Alıcı olmayanları arşive kaldırma", lambda: cmd_cleanup(N()))]
     errors = []
     for k, (title, fn) in enumerate(steps, 1):
@@ -1933,7 +1973,8 @@ def main():
     s = add("harvest-products", cmd_harvest_products, "ürün etiketinde kakao geçen markaları bul (OpenFoodFacts, kanıtlı alıcılar)")
     s.add_argument("--country", required=True, help="ISO2 virgülle: DE,NL,PL"); s.add_argument("--pages", type=int, default=8)
     add("cleanup", cmd_cleanup, "dükkân/kafe/rakip gibi uygun olmayanları arşive kaldır (silmez)")
-    add("auto", cmd_auto, "otomatik tarama turunu şimdi çalıştır (sıradaki 3 odak ülke)")
+    add("auto", cmd_auto, "otomatik tarama turunu şimdi çalıştır (sıradaki odak ülkeler)")
+    add("fix-countries", cmd_fix_countries, "firmaların ülkesini sitelerinden kontrol et ve düzelt")
     add("score", cmd_score, "firmaları puanla")
     s = add("list", cmd_list, "firmaları listele")
     s.add_argument("--status"); s.add_argument("--country"); s.add_argument("--segment")

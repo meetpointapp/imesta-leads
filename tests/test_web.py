@@ -63,6 +63,7 @@ class R:
 def setUpModule():
     leads.focus_countries = lambda: list(leads.COUNTRIES)  # eski testler: tüm ülkeler odakta
     leads.products.find_site = lambda brand, cc: None  # testte ağa çıkılmaz
+    leads.fix_country = lambda con, cid: None  # sahte sitelerin hepsinde aynı Alman telefonu var; ülke tespiti test_geo'da
     leads.DB_PATH = os.path.join(tempfile.mkdtemp(), "w.db")
     secrets_util.PATH = os.path.join(tempfile.mkdtemp(), "secrets.json")
     leads.mail_domain_ok = lambda d: True
