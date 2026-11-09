@@ -4,7 +4,8 @@ Notlar satıcının masasındaki kopya kâğıdı gibidir: hangi dilde yazılır
 Mevzuat ve yaptırımlar değişir; sevkiyat öncesi bankanız ve gümrük müşavirinizle teyit edin.
 """
 
-DEFAULT_FOCUS = ["RU", "BY", "AZ", "IR", "IQ", "SY", "JO", "EG", "MA", "DZ"]
+DEFAULT_FOCUS = ["RU", "BY", "AZ", "KZ", "UZ", "KG", "TM", "TJ", "MN", "IR", "IQ", "SY", "JO", "EG", "MA", "DZ"]
+NEW_IN_V3 = ["KZ", "UZ", "KG", "TM", "TJ", "MN"]  # sonradan eklenen pazarlar: kayıtlı ayarlara bir kez eklenir
 
 # lang: e-posta dili (templates/<lang>_*.txt) · route: lojistik · pay: ödeme · deal: Türkiye ile ticaret anlaşması · docs/tips: belge ve satış ipuçları
 PROFILE = {
@@ -23,6 +24,36 @@ PROFILE = {
            "deal": "Türkiye–Azerbaycan Tercihli Ticaret Anlaşması (bazı ürünlerde gümrük indirimi; kakao kapsamını teyit edin)",
            "docs": "Menşe şahadetnamesi, sağlık sertifikası, COA",
            "tips": "Türkçe yazın, telefonda Türkçe konuşun: en büyük avantajınız. Azersun gibi holdingler toplu ve düzenli alır."},
+    "KZ": {"lang": "ru", "route": "Orta Koridor: Gürcistan–Azerbaycan–Hazar feribotu–Aktau; ya da İran–Türkmenistan–Özbekistan karayolu",
+           "pay": "Banka transferi genelde sorunsuz; yeni alıcıda peşin ya da akreditif",
+           "deal": "Serbest ticaret anlaşması yok (Avrasya Ekonomik Birliği tarifesi)",
+           "docs": "EAC uygunluk beyanı, Rusça etiket, menşe şahadetnamesi, COA",
+           "tips": "Rusça yazın. Almatı ve Astana'daki şekerleme fabrikaları (Rakhat, Bayan Sulu) büyük alıcı; Türk tedarikçiye güven yüksek. Toptancılar Kırgızistan'a da satar."},
+    "UZ": {"lang": "ru", "route": "Kara: İran–Türkmenistan üzerinden; ya da Orta Koridor (Hazar)",
+           "pay": "Banka transferi; yeni alıcıda peşin ya da akreditif",
+           "deal": "Türkiye–Özbekistan Tercihli Ticaret Anlaşması (ürün listesini ve kakaonun kapsamını teyit edin)",
+           "docs": "Uygunluk sertifikası (O'zstandart), menşe şahadetnamesi, helal sertifikası, COA",
+           "tips": "Rusça ya da Özbekçe yazın. Şekerleme ve bisküvi sanayi hızla büyüyor; Taşkent ve Semerkant'taki toptancılar küçük fabrikalara dağıtır."},
+    "KG": {"lang": "ru", "route": "Kara: İran–Türkmenistan–Özbekistan; ya da Orta Koridor ve Kazakistan üzerinden",
+           "pay": "Banka transferi; yeni alıcıda peşin",
+           "deal": "Serbest ticaret anlaşması yok (Avrasya Ekonomik Birliği tarifesi)",
+           "docs": "EAC uygunluk beyanı, Rusça etiket, menşe şahadetnamesi, COA",
+           "tips": "Rusça yazın. Pazar küçük; Bişkek'teki fırın-pastane zincirleri ve toptancılar ana alıcı, küçük partiler önerin."},
+    "TM": {"lang": "ru", "route": "Kara: İran üzerinden (Sarahs) ya da Hazar feribotu–Türkmenbaşı",
+           "pay": "Döviz çıkışı sınırlı; peşin ödeme ya da güvenilir aracı",
+           "deal": "Serbest ticaret anlaşması yok",
+           "docs": "Menşe şahadetnamesi, sağlık sertifikası, COA; ithalat sözleşmesi kayıt gerektirebilir",
+           "tips": "Rusça ya da Türkçe yazın; Türk firmaları ülkede çok aktif. Devlet ağırlıklı pazar: büyük gıda kombinaları ve yetkili toptancılar üzerinden çalışın."},
+    "TJ": {"lang": "ru", "route": "Kara: İran–Türkmenistan–Özbekistan üzerinden",
+           "pay": "Peşin ya da akreditif",
+           "deal": "Serbest ticaret anlaşması yok",
+           "docs": "Menşe şahadetnamesi, sağlık sertifikası, COA",
+           "tips": "Rusça yazın. Pazar küçük; Duşanbe'deki toptancılar ve fırın-şekerleme üreticileri hedef, küçük partiler."},
+    "MN": {"lang": "en", "route": "Deniz + demiryolu: Mersin → Tianjin → Ulan Batur; ya da Rusya üzerinden demiryolu",
+           "pay": "Banka transferi; yeni alıcıda peşin",
+           "deal": "Serbest ticaret anlaşması yok",
+           "docs": "Menşe şahadetnamesi, sağlık sertifikası, COA",
+           "tips": "İngilizce ya da Rusça yazın. İthalata bağımlı küçük pazar; Talkh Chikher (fırın-şekerleme) ve APU (süt-içecek) gibi büyükler ve toptancılar hedef."},
     "IR": {"lang": "en", "route": "Kara: Gürbulak/Kapıköy sınır kapıları, Tebriz'e 2–3 gün",
            "pay": "ABD yaptırımları nedeniyle bankalar çekingen; gıda insani istisnada ama ödeme kanalı (TL, döviz bürosu, mahsuplaşma) önceden netleşmeli",
            "deal": "Türkiye–İran Tercihli Ticaret Anlaşması (sınırlı ürün listesi; kakaoyu teyit edin)",

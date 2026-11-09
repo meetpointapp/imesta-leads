@@ -99,6 +99,53 @@ class T(unittest.TestCase):
                 self.assertNotIn("{", leads.render_email(con, cid, lang, tpl)[1])
         con.close()
 
+    def test_wholesalers_recognised_in_local_languages(self):
+        crawler = leads.crawler
+        ru_whole = ("Кондитерское сырье оптом. Какао порошок алкализованный оптом от 25 кг. Мы дистрибьютор ингредиентов для кондитерского производства. "
+                    "Оптовым покупателям — скидки. Доставка по Казахстану.")
+        ar_whole = "مستورد وموزع مواد خام المخابز والحلويات. كاكاو بودرة بالجملة. توزيع لجميع المصانع والمخابز. مواد أولية للحلويات بالجملة."
+        ru_factory = ("Кондитерская фабрика: собственное производство печенья, вафель и тортов. Наш завод выпускает печенье и вафли с какао и шоколадом. "
+                      "Ассортимент: печенье сахарное, вафли с какао-начинкой, торты. Производство с 1995 года.")
+        self.assertEqual(crawler.analyze(ru_whole)["buyer"], "distributor")
+        self.assertEqual(crawler.analyze(ar_whole)["buyer"], "distributor")
+        self.assertEqual(crawler.analyze(ru_factory)["buyer"], "industrial")
+
+    def test_same_firm_different_spelling_merged(self):
+        con = leads.db()
+        a, _ = leads.upsert_company(con, "Rakhat", "KZ", None, "https://www.rakhat.kz", "other", "wikidata")
+        b, new = leads.upsert_company(con, "Rakhat (Рахат)", "KZ", None, None, "chocolate_maker", "seed")
+        c, _ = leads.upsert_company(con, "ООО «Конти»", "RU", None, None, "confectionery", "osm")
+        d, _ = leads.upsert_company(con, "Конти", "RU", None, None, "confectionery", "wikidata")
+        e, _ = leads.upsert_company(con, "Rakhat Bakery", "KZ", None, None, "biscuit_bakery", "osm")
+        self.assertEqual((b, new), (a, False))
+        self.assertEqual(c, d)
+        self.assertNotEqual(e, a)  # farklı firma birleşmez
+        con.close()
+
+    def test_new_markets_and_queries(self):
+        for cc in ("KZ", "UZ", "KG", "TM", "TJ", "MN"):
+            self.assertIn(cc, leads.COUNTRIES)
+            self.assertIn(cc, focus.PROFILE)
+            self.assertIn(cc, focus.DEFAULT_FOCUS)
+        qs = [q for cc, seg, q in leads.discover.build_queries(["KZ"], ["distributor"])]
+        self.assertIn("какао порошок оптом Казахстан", qs)
+        self.assertTrue(any("оптом" in q for q in [q for cc, seg, q in leads.discover.build_queries(["UZ"], ["distributor"])]))
+
+    def test_saved_focus_list_gets_new_markets_once(self):
+        cfg = os.path.join(tempfile.mkdtemp(), "c.json")
+        with open(cfg, "w", encoding="utf-8") as f:
+            json.dump({"company_name": "İmesta Food", "focus_countries": ["RU", "EG"]}, f)
+        orig = leads.CONFIG_PATH
+        leads.CONFIG_PATH = cfg
+        try:
+            leads.upgrade_config()
+            self.assertEqual(leads.config()["focus_countries"], ["RU", "EG"] + focus.NEW_IN_V3)
+            leads.save_config({"focus_countries": ["RU"]})  # kullanıcı sonradan çıkarırsa geri eklenmez
+            leads.upgrade_config()
+            self.assertEqual(leads.config()["focus_countries"], ["RU"])
+        finally:
+            leads.CONFIG_PATH = orig
+
     def test_score_mentions_market_and_fta(self):
         con = leads.db()
         cid, _ = leads.upsert_company(con, "Bisco", "EG", None, "https://bisco.eg", "biscuit_bakery", "test")

@@ -488,8 +488,14 @@ def find_facts(text):
 COCOA_TERMS = [(r"cocoa|cacao|kakao|kakao", 3.0), (r"chocolat|schokolad|cioccolat|çikolata|cikolata|couverture|praline|pralin|truffle|nougat", 2.0),
                (r"confection|konfekt|s[uü](?:ß|ss)waren|bonbon|candy|candies|sweets|[sş]eker|gummy|caramel", 1.0),
                (r"bakery|b[aä]ckerei|patisserie|biscuit|keks|cookie|pastry|dessert|ice cream|eiscreme|gelato|dondurma|wafer|waffel", 0.6)]
-MANUF = re.compile(r"manufactur|hersteller|produktion|we produce|we make|production facilit|factory|fabrik|üretici|üretim|fabbrica|fabricant|our plant|werk\b", re.I)
-WHOLE = re.compile(r"wholesale|gro(?:ß|ss)handel|distributor|distribution|\bb2b\b|importer|import & export|toptan|ingredient supplier|rohstoff|zutaten|supplier of|ithalat", re.I)
+MANUF = re.compile(r"manufactur|hersteller|produktion|we produce|we make|production facilit|factory|fabrik|üretici|üretim|fabbrica|fabricant|our plant|werk\b|"
+                   r"производств|производител|фабрик|завод|комбинат|изготовител|usine|unité de production|مصنع|تصنيع|إنتاج|انتاج|تولید|کارخانه|"
+                   r"ishlab chiqar|istehsal|өндіріс|zavod", re.I)
+WHOLE = re.compile(r"wholesale|gro(?:ß|ss)handel|distributor|distribution|\bb2b\b|importer|import & export|toptan|ingredient supplier|rohstoff|zutaten|supplier of|ithalat|"
+                   r"оптов|оптом|дистрибь?ют|дистрибуц|импорт[её]р|поставщик|кондитерское сырь|сырь[её] для|ингредиент|торговый дом|"
+                   r"grossiste|importateur|distributeur|négoce|matières premières|"
+                   r"بالجملة|جملة|موزع|توزيع|مستورد|استيراد|مواد خام|مواد أولية|عمده|پخش|واردکننده|بازرگانی|مواد اولیه|"
+                   r"ulgurji|distribyutor|көтерме|дистрибьютор|topdan|idxal", re.I)
 RETAIL = re.compile(r"add to cart|warenkorb|in den warenkorb|shopping cart|checkout|sepete ekle|sepet\b|online shop|webshop|panier|ajouter au panier|öffnungszeiten|opening hours|gift card|geschenkgutschein", re.I)
 
 
@@ -506,13 +512,15 @@ CATEGORIES = {
     "spread": r"spread|aufstrich|cr[eè]me [aà] tartiner|crema spalmabile|nougat|praline cream|nutella|f[ıi]nd[ıi]k ezmesi|hazelnut cream|fillings?|f[uü]llung|fourrage|farcit|topping|glaz",
     "confectionery": r"confection|konfekt|s[uü](?:ß|ss)waren|suesswaren|dolciumi|confiserie|confiter[ií]a|snoep|cukiern|[sş]ekerleme|حلويات|кондитер|candy|bonbon|gummy|lollipop|dragée|dragee|marzipan",
     "chocolate": r"chocolat|schokolad|cioccolat|chocolate|cokolad|çikolata|cikolata|шоколад|شوكولات|couverture|compound coating|kuvert[uü]r|praline|pralin",
-    "ingredients": r"ingredient|zutaten|rohstoff|ingredienti|ingr[eé]dient|ingrediente|ingredi[eë]nt|sk[lł]adnik|hammadde|مكونات|ингредиент|backzutaten",
+    "ingredients": r"ingredient|zutaten|rohstoff|ingredienti|ingr[eé]dient|ingrediente|ingredi[eë]nt|sk[lł]adnik|hammadde|مكونات|ингредиент|backzutaten|"
+                   r"кондитерское сырь|сырь[её] для|мат[еи]риал[ыи] для кондитер|matières premières|مواد خام|مواد أولية|مواد اولیه|xom ashyo",
 }
 CAT_RE = {k: re.compile(v, re.I) for k, v in CATEGORIES.items()}
 USER_CATS = ("biscuit", "wafer", "cake", "bakery", "ice_cream", "dairy", "beverage", "cereal_snack", "spread", "confectionery", "chocolate")
 B2B_RE = re.compile(r"b2b|wholesale|gro(?:ß|ss)handel|grossist|all'ingrosso|grossiste|mayorista|groothandel|hurtown|toptan|بالجملة|private label|eigenmarke|marque de distributeur|"
                     r"co-?pack|\boem\b|industrial customers|industriekunden|food industry|lebensmittelindustrie|industrie alimentaire|industria alimentare|g[ıi]da sanayi|"
-                    r"\bbulk\b|25 ?kg|big bags?|pallets?|supplier to|lieferant f[uü]r|zulieferer|food ?service|gastronomie|horeca|we export|exportieren|exporting to", re.I)
+                    r"\bbulk\b|25 ?kg|big bags?|pallets?|supplier to|lieferant f[uü]r|zulieferer|food ?service|gastronomie|horeca|we export|exportieren|exporting to|"
+                    r"оптом|оптовым|для бизнеса|для производств|собственная торговая марка|экспорт|عمده|بالجملة|للمصانع|صادرات|ulgurji|topdan", re.I)
 PROCESSOR_RE = re.compile(r"(?:hersteller|produzent|producer|manufacturer|producteur|produttore|fabricant)\s+(?:von|of|de|di|van)?\s*(?:kakao|cocoa|cacao)\w*|"
                           r"cocoa (?:bean )?(?:processing|processor|grinding|grinder)|cocoa liquor producer|kakaoverarbeitung|cacao transformation|bean[- ]to[- ]bar|"
                           r"cocoa processor|origin cocoa|cocoa beans? (?:sourcing|trading|supply)|kakao i[sş]leme|cocoa mass producer|cocoa butter producer", re.I)
@@ -564,11 +572,13 @@ def signals(text):  # geriye uyumluluk
 
 # ----------------------------------------------------------------------------- sayfa seçimi
 RANK = [(100, r"impressum|imprint|legal[-_ ]?notice|rechtliche|mentions[-_ ]?l[eé]gales|aviso[-_ ]?legal|note[-_ ]?legali"),
-        (95, r"contact|kontakt|contatt|contacto|iletisim|iletişim|contato|nous[-_ ]contacter|ansprech"),
+        (95, r"contact|kontakt|contatt|contacto|iletisim|iletişim|contato|nous[-_ ]contacter|ansprech|контакт|связ|اتصل|تواصل|تماس|aloqa|байланыс|əlaqə"),
         (80, r"\bteam\b|/team|management|leadership|people|our[-_ ]?team|wer[-_ ]wir|gesch[aä]ftsf|f[uü]hrung|y[oö]netim|ekip|equipe|[eé]quipe"),
-        (70, r"about|[uü]ber[-_ ]uns|unternehmen|company|who[-_ ]we|hakk[ıi]m[ıi]zda|chi[-_ ]siamo|[aà][-_ ]propos|qui[-_ ]sommes|firma|kurumsal|profile"),
-        (60, r"sales|vertrieb|export|purchas|einkauf|b2b|wholesale|gro(?:ß|ss)handel|distribut|h[aä]ndler|partner|industr|ingredient|zutaten|rohstoff"),
-        (45, r"products?|produkte|produits|prodotti|[uü]r[uü]nler|cocoa|kakao|schokolade|chocolate")]
+        (70, r"about|[uü]ber[-_ ]uns|unternehmen|company|who[-_ ]we|hakk[ıi]m[ıi]zda|chi[-_ ]siamo|[aà][-_ ]propos|qui[-_ ]sommes|firma|kurumsal|profile|"
+              r"о[-_ ]компании|о[-_ ]нас|من[-_ ]نحن|عن[-_ ]الشركة|درباره|biz[-_ ]haq|haqqımızda"),
+        (60, r"sales|vertrieb|export|purchas|einkauf|b2b|wholesale|gro(?:ß|ss)handel|distribut|h[aä]ndler|partner|industr|ingredient|zutaten|rohstoff|"
+              r"оптов|партн[её]р|дилер|дистриб|сотрудничеств|الموزعين|وكلاء|نمایندگی|همکاری|hamkorlik"),
+        (45, r"products?|produkte|produits|prodotti|[uü]r[uü]nler|cocoa|kakao|schokolade|chocolate|продукц|каталог|منتجات|محصولات|mahsulot")]
 SKIP_LINK = re.compile(r"\.(pdf|jpe?g|png|gif|svg|zip|docx?|xlsx?|mp4|webp)(\?|$)|privacy|datenschutz|cookie|login|account|cart|warenkorb|checkout|"
                        r"career|karriere|jobs|blog|news|presse|press|faq|terms|agb|widerruf|wishlist|sitemap|tel:|mailto:|javascript:", re.I)
 

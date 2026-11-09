@@ -16,13 +16,13 @@ import secrets_util
 
 UA = "ImestaFoodBot/1.0 (+https://imestafood.com)"
 
-LANG_OF = {"RU": "ru", "BY": "ru", "AZ": "az", "IR": "fa", "SY": "ar", "DE": "de", "AT": "de", "CH": "de", "LI": "de", "NL": "nl", "BE": "nl", "FR": "fr", "LU": "fr", "MA": "fr", "DZ": "fr", "TN": "fr", "IT": "it",
+LANG_OF = {"RU": "ru", "BY": "ru", "KZ": "ru", "KG": "ru", "UZ": "ru", "TJ": "ru", "TM": "ru", "AZ": "az", "IR": "fa", "SY": "ar", "DE": "de", "AT": "de", "CH": "de", "LI": "de", "NL": "nl", "BE": "nl", "FR": "fr", "LU": "fr", "MA": "fr", "DZ": "fr", "TN": "fr", "IT": "it",
            "ES": "es", "MX": "es", "AR": "es", "CO": "es", "PT": "pt", "BR": "pt", "PL": "pl", "SA": "ar", "EG": "ar", "IQ": "ar", "JO": "ar", "LB": "ar",
            "KW": "ar", "QA": "ar", "OM": "ar", "LY": "ar"}
-COUNTRY_LOCAL = {"RU": "Россия", "BY": "Беларусь", "AZ": "Azərbaycan", "IR": "ایران", "SY": "سوريا", "DE": "Deutschland", "AT": "Österreich", "CH": "Schweiz", "NL": "Nederland", "BE": "België", "FR": "France", "IT": "Italia", "ES": "España",
+COUNTRY_LOCAL = {"RU": "Россия", "BY": "Беларусь", "KZ": "Казахстан", "KG": "Кыргызстан", "UZ": "Узбекистан", "TJ": "Таджикистан", "TM": "Туркменистан", "AZ": "Azərbaycan", "IR": "ایران", "SY": "سوريا", "DE": "Deutschland", "AT": "Österreich", "CH": "Schweiz", "NL": "Nederland", "BE": "België", "FR": "France", "IT": "Italia", "ES": "España",
                  "PL": "Polska", "PT": "Portugal", "BR": "Brasil", "MX": "México", "SA": "السعودية", "AE": "الإمارات", "EG": "مصر", "IQ": "العراق",
                  "JO": "الأردن", "KW": "الكويت", "QA": "قطر", "OM": "عمان", "LB": "لبنان", "MA": "Maroc", "DZ": "Algérie", "TN": "Tunisie", "LY": "ليبيا"}
-COUNTRY_EN = {"SY": "Syria", "BY": "Belarus", "IR": "Iran", "DE": "Germany", "NL": "Netherlands", "BE": "Belgium", "FR": "France", "GB": "United Kingdom", "IT": "Italy", "ES": "Spain", "PL": "Poland",
+COUNTRY_EN = {"SY": "Syria", "BY": "Belarus", "IR": "Iran", "UZ": "Uzbekistan", "KG": "Kyrgyzstan", "TJ": "Tajikistan", "TM": "Turkmenistan", "MN": "Mongolia", "DE": "Germany", "NL": "Netherlands", "BE": "Belgium", "FR": "France", "GB": "United Kingdom", "IT": "Italy", "ES": "Spain", "PL": "Poland",
               "RU": "Russia", "US": "USA", "CA": "Canada", "AE": "UAE", "SA": "Saudi Arabia", "EG": "Egypt", "IQ": "Iraq", "JO": "Jordan", "LB": "Lebanon",
               "KW": "Kuwait", "QA": "Qatar", "OM": "Oman", "MA": "Morocco", "DZ": "Algeria", "TN": "Tunisia", "LY": "Libya", "IN": "India", "CN": "China",
               "JP": "Japan", "KR": "South Korea", "MY": "Malaysia", "ID": "Indonesia", "SG": "Singapore", "AU": "Australia", "NZ": "New Zealand", "BR": "Brazil",
@@ -34,6 +34,16 @@ COUNTRY_EN = {"SY": "Syria", "BY": "Belarus", "IR": "Iran", "DE": "Germany", "NL
 
 # segment → dil → aranacak ifadeler (kakao kullanan üreticiler ve hammadde distribütörleri)
 TERMS = {
+    "ru": {"distributor": ["какао порошок оптом", "кондитерское сырье оптом", "ингредиенты для кондитерского производства", "дистрибьютор какао продуктов"],
+           "biscuit_bakery": ["кондитерская фабрика печенье", "производство вафель", "хлебозавод кондитерские изделия"], "ice_cream": ["производство мороженого"],
+           "dairy_beverage": ["молочный комбинат", "производство какао напитков"], "cereal_snack": ["производство сухих завтраков", "производство шоколадной пасты"],
+           "chocolate_maker": ["шоколадная фабрика", "кондитерская фабрика"]},
+    "fa": {"distributor": ["پخش عمده پودر کاکائو", "مواد اولیه قنادی عمده", "واردکننده پودر کاکائو"],
+           "biscuit_bakery": ["کارخانه بیسکویت", "تولید کیک و کلوچه"], "ice_cream": ["کارخانه بستنی"], "dairy_beverage": ["کارخانه لبنیات", "تولید شیر کاکائو"],
+           "cereal_snack": ["تولید غلات صبحانه", "تولید شکلات صبحانه"], "chocolate_maker": ["کارخانه شکلات", "تولید شیرینی و شکلات"]},
+    "az": {"distributor": ["kakao tozu topdan", "qənnadı xammalı topdan"], "biscuit_bakery": ["peçenye istehsalı", "qənnadı fabriki"],
+           "ice_cream": ["dondurma istehsalı"], "dairy_beverage": ["süd məhsulları zavodu"], "cereal_snack": ["səhər yeməyi taxıl istehsalı"],
+           "chocolate_maker": ["şokolad fabriki"]},
     "en": {"distributor": ["cocoa powder importer distributor", "bakery ingredients wholesale distributor", "food ingredients importer"],
            "biscuit_bakery": ["biscuit manufacturer", "cake and bakery products manufacturer", "wafer manufacturer"],
            "ice_cream": ["ice cream manufacturer"], "dairy_beverage": ["chocolate milk drink manufacturer", "dairy desserts manufacturer", "instant cocoa drink manufacturer"],
@@ -43,7 +53,7 @@ TERMS = {
            "biscuit_bakery": ["Keks Hersteller", "Kuchen Backwaren Hersteller Industrie", "Waffel Hersteller"], "ice_cream": ["Speiseeis Hersteller"],
            "dairy_beverage": ["Kakaogetränk Hersteller", "Milchdessert Hersteller"], "cereal_snack": ["Müsli Cerealien Hersteller", "Schokoladenaufstrich Hersteller", "Riegel Hersteller"],
            "chocolate_maker": ["Schokolade Hersteller", "Süßwaren Hersteller"]},
-    "fr": {"distributor": ["importateur cacao en poudre grossiste", "grossiste ingrédients boulangerie pâtisserie"],
+    "fr": {"distributor": ["poudre de cacao grossiste", "importateur cacao en poudre grossiste", "grossiste ingrédients boulangerie pâtisserie"],
            "biscuit_bakery": ["fabricant biscuits", "fabricant gâteaux viennoiseries industriels", "fabricant gaufrettes"], "ice_cream": ["fabricant glaces"],
            "dairy_beverage": ["fabricant boisson chocolatée", "fabricant desserts lactés"], "cereal_snack": ["fabricant céréales petit déjeuner", "fabricant barres céréales", "fabricant pâte à tartiner"],
            "chocolate_maker": ["fabricant chocolat", "fabricant confiserie"]},
@@ -67,7 +77,7 @@ TERMS = {
            "biscuit_bakery": ["fabricante biscoitos", "fabricante bolos industriais", "fabricante wafers"], "ice_cream": ["fabricante sorvetes"],
            "dairy_beverage": ["fabricante achocolatado", "fabricante sobremesas lácteas"], "cereal_snack": ["fabricante cereais matinais", "fabricante barras de cereais", "fabricante creme de avelã"],
            "chocolate_maker": ["fabricante chocolate", "fabricante confeitaria"]},
-    "ar": {"distributor": ["مستورد كاكاو بودرة", "موزع مواد خام المخابز والحلويات"], "biscuit_bakery": ["مصنع بسكويت", "مصنع كيك ومعجنات", "مصنع ويفر"],
+    "ar": {"distributor": ["كاكاو بودرة بالجملة", "مستورد كاكاو بودرة", "موزع مواد خام المخابز والحلويات"], "biscuit_bakery": ["مصنع بسكويت", "مصنع كيك ومعجنات", "مصنع ويفر"],
            "ice_cream": ["مصنع آيس كريم"], "dairy_beverage": ["مصنع مشروبات الشوكولاتة", "مصنع ألبان وحلويات"], "cereal_snack": ["مصنع حبوب إفطار", "مصنع كريمة الشوكولاتة"],
            "chocolate_maker": ["مصنع شوكولاتة", "مصنع حلويات"]},
 }

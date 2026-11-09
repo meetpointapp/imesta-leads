@@ -781,6 +781,10 @@ def page_firms(con, q):
         w.append("id IN (SELECT company_id FROM contacts WHERE email_ok=1)")
     if g("k"):
         w.append("evidence IS NOT NULL")
+    if g("t") == "toptan":  # kakao tozunu yeniden satan toptancı/distribütörler
+        w.append("(buyer_type='distributor' OR segment IN ('distributor','bakery_ingredient'))")
+    elif g("t") == "uretici":
+        w.append("IFNULL(buyer_type,'')<>'distributor' AND segment NOT IN ('distributor','bakery_ingredient')")
     where = " AND ".join(w)
     order = "id DESC" if g("s") == "yeni" else "score DESC, id DESC"
     total = con.execute(f"SELECT COUNT(*) FROM companies WHERE {where}", p).fetchone()[0]
@@ -801,6 +805,9 @@ def page_firms(con, q):
         h += ('<div class="warnbar"><b>E-posta imzan eksik.</b> Taslaklarda "ADINIZ SOYADINIZ" yazıyor: '
               '<a href="/settings">Ayarlar → Firma ve imza bilgileri</a>.</div>')
     h += auto_status(con)
+    if not leads.discover.provider():
+        h += ('<div class="warnbar">Toptancıları bulmanın en güçlü yolu arama motoru: "какао порошок оптом", "كاكاو بودرة بالجملة" gibi yerel dilde aramalar. '
+              '<a href="/settings">Ayarlar</a>\'dan ücretsiz bir arama anahtarı (Brave ya da Google) eklersen otomatik tarama bunları da yapar.</div>')
     seg = lambda v, label, n: (f'<a class="{"on" if view == v else ""}" href="/{build_qs(q, v=v or None, page=None)}">{label} <b>{n}</b></a>')  # noqa: E731
     h += '<div class="segtabs">' + seg("", "Yeni adaylar", n_new) + seg("crm", "CRM'dekiler", n_crm) + seg("all", "Tümü", n_new + n_crm) + "</div>"
     tabs = f'<a class="{"on" if not cc else ""}" href="/{build_qs(q, c=None, page=None)}">Tüm ülkeler <b>{n_all}</b></a>'
@@ -809,6 +816,8 @@ def page_firms(con, q):
     h += f'<div class="chiptabs">{tabs}</div>'
     hidden = "".join(f'<input type="hidden" name="{k}" value="{esc(g(k))}">' for k in ("v", "c") if g(k))
     h += (f'<form class="hubfilter" method="get">{hidden}<input name="q" value="{esc(g("q"))}" placeholder="Firma, site, şehir ara…">'
+          f'<select name="t" onchange="this.form.submit()" aria-label="Alıcı tipi">'
+          f'{opts([("", "Üretici + toptancı"), ("uretici", "Sadece üreticiler"), ("toptan", "Sadece toptancılar")], g("t"))}</select>'
           f'<label class="chip"><input type="checkbox" name="e" value="1"{" checked" if g("e") else ""} onchange="this.form.submit()"> {icon("mail", 14)} e-postası var</label>'
           f'<label class="chip"><input type="checkbox" name="k" value="1"{" checked" if g("k") else ""} onchange="this.form.submit()"> 🍫 ürün kanıtlı</label>'
           f'<select name="s" onchange="this.form.submit()">{opts([("", "Puana göre"), ("yeni", "Yeni bulunanlar önce")], g("s"))}</select>'
@@ -1935,9 +1944,9 @@ class H(BaseHTTPRequestHandler):
                 seg = f.get("segment") if f.get("segment") in SEGMENTS else "other"
                 cc = f.get("country", "").upper() or None
                 try:
-                    con.execute("UPDATE companies SET name=?, website=?, domain=?, country=?, city=?, segment=?, value_usd=?, product=?, "
+                    con.execute("UPDATE companies SET name=?, nkey=?, website=?, domain=?, country=?, city=?, segment=?, value_usd=?, product=?, "
                                 "lost_reason=COALESCE(?, lost_reason), notes=? WHERE id=?",
-                                (f["name"], website or None, leads.get_domain(website) or None, cc if cc in COUNTRIES else None, f.get("city") or None, seg,
+                                (f["name"], leads.name_key(f["name"]), website or None, leads.get_domain(website) or None, cc if cc in COUNTRIES else None, f.get("city") or None, seg,
                                  num(f.get("value_usd")), f.get("product") or None, f.get("lost_reason"), f.get("notes"), cid))
                     con.commit()
                 except sqlite3.IntegrityError:

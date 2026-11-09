@@ -67,6 +67,7 @@ COUNTRIES = {  # ISO2: (Türkçe ad, ISO3)
     "KZ": ("Kazakistan", "KAZ"), "AZ": ("Azerbaycan", "AZE"), "GE": ("Gürcistan", "GEO"), "IL": ("İsrail", "ISR"),
     "NG": ("Nijerya", "NGA"), "ZA": ("Güney Afrika", "ZAF"), "KE": ("Kenya", "KEN"), "PK": ("Pakistan", "PAK"),
     "SY": ("Suriye", "SYR"), "BY": ("Belarus", "BLR"), "IR": ("İran", "IRN"),
+    "UZ": ("Özbekistan", "UZB"), "KG": ("Kırgızistan", "KGZ"), "TM": ("Türkmenistan", "TKM"), "TJ": ("Tacikistan", "TJK"), "MN": ("Moğolistan", "MNG"),
     "BD": ("Bangladeş", "BGD"), "PH": ("Filipinler", "PHL"), "TH": ("Tayland", "THA"), "VN": ("Vietnam", "VNM"),
 }
 ISO2_TO_ISO3 = {k: v[1] for k, v in COUNTRIES.items()}
@@ -113,7 +114,7 @@ NEW_COLUMNS = [("value_usd", "REAL"), ("product", "TEXT"), ("lost_reason", "TEXT
                ("enrich_error", "TEXT"), ("enrich_v", "INTEGER DEFAULT 0"),
                ("buyer_type", "TEXT"), ("categories", "TEXT"), ("b2b_signal", "INTEGER"), ("fit_reasons", "TEXT"), ("name_gloss", "TEXT"),
                ("name_latin", "TEXT"), ("desc_tr", "TEXT"), ("summary_tr", "TEXT"), ("offer", "TEXT"),
-               ("evidence", "TEXT"), ("archived", "INTEGER DEFAULT 0")]
+               ("evidence", "TEXT"), ("archived", "INTEGER DEFAULT 0"), ("nkey", "TEXT")]
 CONTACT_COLUMNS = [("dept", "TEXT"), ("kind", "TEXT"), ("confidence", "INTEGER"), ("source_url", "TEXT")]
 
 
@@ -123,6 +124,9 @@ def migrate(con):
     for name, typ in NEW_COLUMNS:
         if name not in cols:
             con.execute(f"ALTER TABLE companies ADD COLUMN {name} {typ}")
+    for r in con.execute("SELECT id, name FROM companies WHERE nkey IS NULL").fetchall():  # karşılaştırma anahtarı (bir kez doldurulur)
+        con.execute("UPDATE companies SET nkey=? WHERE id=?", (name_key(r[1]), r[0]))
+    con.execute("CREATE INDEX IF NOT EXISTS ix_company_nkey ON companies(country, nkey)")
     kcols = {r[1] for r in con.execute("PRAGMA table_info(contacts)")}
     for name, typ in CONTACT_COLUMNS:
         if name not in kcols:
@@ -212,7 +216,7 @@ def config():
 def save_config(updates):
     """config.json'daki alanları günceller (diğer ayarlar ve tema korunur)."""
     cfg = config()
-    cfg.update({k: v for k, v in updates.items() if isinstance(v, str)})
+    cfg.update({k: v for k, v in updates.items() if isinstance(v, (str, bool, list))})  # ülke listesi ve aç/kapa ayarları da kaydedilir
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=1)
         f.write("\n")
@@ -232,6 +236,10 @@ def upgrade_config():
             "website": "https://imestafood.com", "company_name": "İmesta Food"}
     old = {"products": "couverture", "certifications": "düzenleyin", "postal_address": "Şirket adresiniz", "website": "imestafood.com", "company_name": "Imesta Food"}
     upd = {k: v for k, v in real.items() if old[k] in (cfg.get(k) or old[k]) and cfg.get(k) != v}
+    if cfg.get("focus_countries") and not cfg.get("focus_v3"):  # yeni eklenen pazarlar (Türk cumhuriyetleri, Moğolistan) kayıtlı listeye bir kez eklenir
+        upd["focus_countries"] = cfg["focus_countries"] + [c for c in focus.NEW_IN_V3 if c not in cfg["focus_countries"]]
+    if not cfg.get("focus_v3"):
+        upd["focus_v3"] = True
     if upd.get("website") and cfg.get("website") not in ("https://imestafood.com", "http://imestafood.com", None, ""):
         upd.pop("website")
     if upd:
@@ -325,6 +333,16 @@ def http_get(url, timeout=20, headers=None):
         return r.read().decode(r.headers.get_content_charset() or "utf-8", "replace")
 
 
+LEGAL_WORDS = re.compile(r"\b(ooo|ооо|ao|ао|zao|зао|oao|оао|pao|пао|tov|тов|llc|ltd|limited|inc|jsc|gmbh|sa|sarl|spa|srl|co|company|group|"
+                         r"holding|компания|группа|ширкати|şirketi)\b", re.I)
+
+
+def name_key(name):
+    """Karşılaştırma anahtarı: parantez içi, şirket türü ve noktalama atılır ("Rakhat (Рахат)" ve "Rakhat" aynı)."""
+    base = re.split(r"[(\[]", name or "")[0]
+    return re.sub(r"[\W_]+", "", LEGAL_WORDS.sub(" ", base.lower()))
+
+
 def upsert_company(con, name, country=None, city=None, website=None, segment="other",
                    source=None, notes=None, email=None, phone=None, manual=False):
     """Aynı alan adı (veya aynı ad+ülke) varsa tekrar eklemez. (id, yeni_mi) döner.
@@ -350,11 +368,14 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
     if not row:
         row = con.execute("SELECT id FROM companies WHERE lower(name)=lower(?) AND IFNULL(country,'')=IFNULL(?,'')",
                           (name, country)).fetchone()
+    key = name_key(name)
+    if not row and len(key) >= 3:  # aynı firmanın farklı yazımı: "Rakhat (Рахат)" = "Rakhat", "ООО «Конти»" = "Конти"
+        row = con.execute("SELECT id FROM companies WHERE IFNULL(country,'')=IFNULL(?,'') AND nkey=?", (country, key)).fetchone()
     if row:
         cid, new = row["id"], False
     else:
-        cur = con.execute("INSERT INTO companies(name,country,city,website,domain,segment,source,notes) VALUES(?,?,?,?,?,?,?,?)",
-                          (name, country, city, website or None, domain or None, segment, source, notes))
+        cur = con.execute("INSERT INTO companies(name,country,city,website,domain,segment,source,notes,nkey) VALUES(?,?,?,?,?,?,?,?,?)",
+                          (name, country, city, website or None, domain or None, segment, source, notes, key))
         cid, new = cur.lastrowid, True
         con.execute("UPDATE companies SET name_gloss=?, name_latin=? WHERE id=?", (translate.gloss_name(name), translate.translit(name), cid))
     if email or phone:
@@ -362,7 +383,7 @@ def upsert_company(con, name, country=None, city=None, website=None, segment="ot
     return cid, new
 
 
-DIAL = {"SY": "963", "BY": "375", "IR": "98", "DE": "49", "AT": "43", "CH": "41", "NL": "31", "BE": "32", "FR": "33", "GB": "44", "IT": "39", "ES": "34", "PL": "48", "RU": "7",
+DIAL = {"SY": "963", "BY": "375", "IR": "98", "UZ": "998", "KG": "996", "TM": "993", "TJ": "992", "MN": "976", "KZ": "7", "DE": "49", "AT": "43", "CH": "41", "NL": "31", "BE": "32", "FR": "33", "GB": "44", "IT": "39", "ES": "34", "PL": "48", "RU": "7",
         "US": "1", "CA": "1", "AE": "971", "SA": "966", "EG": "20", "IQ": "964", "JO": "962", "LB": "961", "KW": "965", "QA": "974", "OM": "968",
         "MA": "212", "DZ": "213", "TN": "216", "LY": "218", "IN": "91", "CN": "86", "JP": "81", "KR": "82", "MY": "60", "ID": "62", "SG": "65",
         "AU": "61", "NZ": "64", "BR": "55", "MX": "52", "SE": "46", "DK": "45", "NO": "47", "FI": "358", "IE": "353", "PT": "351", "GR": "30",
@@ -648,6 +669,8 @@ def import_csv_text(con, text, source, segment=None):
             source, r.get("notes"), r.get("email"), r.get("phone"))
         if cid and r.get("buyer_type") in ("industrial", "distributor", "craft", "retail", "competitor"):
             fill_company(con, cid, buyer_type=r["buyer_type"])
+        if cid and r.get("segment") in SEGMENTS:  # başka kaynaktan "Diğer" olarak gelmişse listedeki segmenti al
+            con.execute("UPDATE companies SET segment=? WHERE id=? AND segment='other'", (r["segment"], cid))
         if cid and r.get("employees"):
             fill_company(con, cid, employees=r["employees"])
         new += is_new
@@ -699,8 +722,8 @@ OSM_FILTERS = {  # segment -> Overpass filtreleri. Varsayılan: kakao KULLANAN s
                         '["man_made"="works"]["name"~"chocolate|schokolade|cioccolat|chocolat|confectionery|s[uü]ßwaren|dolciari|[sş]ekerleme|[cç]ikolata",i]'],
     "ice_cream": ['["product"="ice_cream"]', '["man_made"="works"]["name"~"ice ?cream|speiseeis|gelato|helado|glace|dondurma|lody",i]'],
     "dairy_beverage": ['["industrial"="dairy"]', '["man_made"="works"]["name"~"dairy|molkerei|milch|latte|laiterie|l[aá]cteos|zuivel|mleczarnia|beverage|getr[aä]nke|bevande|boissons|i[cç]ecek",i]'],
-    "distributor": ['["shop"="wholesale"]["name"~"food|ingredient|zutaten|bak|import|trading|gro[ßs]handel|alimentar|g[ıi]da|toptan|ingredienti|hammadde",i]',
-                    '["office"="company"]["name"~"cocoa|kakao|cacao|ingredients|zutaten|food trading|food import",i]'],
+    # ofis/şirket adlarında ülke çapında metin araması harita sunucusunda zaman aşımına düşüyor: yalnızca toptan satış noktaları
+    "distributor": ['["shop"="wholesale"]["name"~"food|ingredient|zutaten|bak|import|trading|gro[ßs]handel|alimentar|g[ıi]da|toptan|ingredienti|hammadde",i]'],
     "retail_craft": ['["shop"="chocolate"]', '["craft"="confectionery"]', '["shop"="confectionery"]'],
     "bakery_ingredient": ['["shop"="wholesale"]["wholesale"="food"]', '["shop"="pastry"]'],
 }
@@ -709,10 +732,15 @@ OSM_LOCAL = {  # Overpass büyük/küçük harf duyarlılığı Latin dışında
     "chocolate_maker": "[Кк]ондитер|[Шш]околад|حلويات|شوكولا|شیرینی|شکلات|[Şş]irniyyat|[Qq]ənnadı|[Şş]okolad|[Cc]hocolaterie|[Cc]onfiserie",
     "ice_cream": "[Мм]орожен|[Хх]ладокомбинат|مثلجات|بوظة|آيس ?كريم|بستنی|[Dd]ondurma|[Gg]lacier",
     "dairy_beverage": "[Мм]олочн|[Мм]олокозавод|[Мм]олкомбинат|ألبان|البان|لبنیات|[Ss]üd |[Ll]aiterie",
+    # toptancılar: kakao tozunu fırın, pastane ve küçük üreticilere yeniden satanlar
+    "distributor": "[Оо]птов|[Оо]птом|[Сс]ырь|[Ии]нгредиент|[Дд]истриб|[Кк]ондитерск|[Тт]орговый дом|جملة|موزع|مواد|پخش|عمده|بازرگانی|"
+                   "[Uu]lgurji|[Тт]оптан|[Tt]opdan|[Gg]rossiste|[Dd]istribut|[Ii]mport",
 }
 for _seg, _rx in OSM_LOCAL.items():
-    OSM_FILTERS[_seg] = OSM_FILTERS[_seg] + [f'["man_made"="works"]["name"~"{_rx}"]', f'["industrial"]["name"~"{_rx}"]',
-                                             f'["building"="industrial"]["name"~"{_rx}"]']
+    OSM_FILTERS[_seg] = OSM_FILTERS[_seg] + ([f'["shop"="wholesale"]["name"~"{_rx}"]',
+                                              '["shop"="wholesale"]["wholesale"~"food|confectionery|bakery"]', '["shop"="pastry_supplies"]']
+                                             if _seg == "distributor" else
+                                             [f'["man_made"="works"]["name"~"{_rx}"]', f'["industrial"]["name"~"{_rx}"]', f'["building"="industrial"]["name"~"{_rx}"]'])
 DEFAULT_OSM_SEGMENTS = ["biscuit_bakery", "chocolate_maker", "ice_cream", "dairy_beverage", "distributor"]
 OVERPASS_URLS = ["https://overpass-api.de/api/interpreter", "https://overpass.kumi.systems/api/interpreter",
                  "https://overpass.private.coffee/api/interpreter", "https://overpass.openstreetmap.fr/api/interpreter"]
