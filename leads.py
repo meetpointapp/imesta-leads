@@ -969,31 +969,40 @@ def cmd_enrich(a):
 
 
 def cmd_discover(a):
-    """Arama motoru (Brave/Google resmî API) ile ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur."""
+    """Arama motoru (Serper, Tavily, Brave ya da Google resmî API) ile ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur.
+    Bir servisin hakkı biterse ya da anahtarı reddedilirse sıradaki servise geçer."""
     con = db()
     log = lambda m: print(m, flush=True)  # noqa: E731
-    prov = discover.provider()
-    if not prov:
-        log("Arama anahtarı tanımlı değil. Ayarlar sayfasından ücretsiz bir Brave Search API ya da Google CSE anahtarı ekleyin.")
+    provs = discover.providers()
+    if not provs:
+        log("Arama anahtarı tanımlı değil. Ayarlar sayfasından ücretsiz bir Tavily ya da Serper anahtarı ekleyin.")
         return
     ccs = [c.strip().upper() for c in (a.country or "").split(",") if c.strip().upper() in COUNTRIES]
     segs = [s.strip() for s in (getattr(a, "segments", "") or "").split(",") if s.strip()] or None
     con.execute("CREATE TABLE IF NOT EXISTS discover_queries(query TEXT PRIMARY KEY, country TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP, n INTEGER)")
     done = {r[0] for r in con.execute("SELECT query FROM discover_queries")}
-    left, period = discover.quota_left(con, prov)
+    left = sum(max(0, discover.quota_left(con, p)[0]) for p in provs)
     todo = [q for q in discover.build_queries(ccs, segs) if q[2] not in done][:max(0, min(int(getattr(a, "max_queries", 0) or 40), left))]
-    log(f"{prov}: {len(todo)} sorgu çalıştırılacak (kalan hak ~{left}).")
+    log(f"{', '.join(provs)}: {len(todo)} sorgu çalıştırılacak (kalan hak ~{left}).")
     total = 0
     for cc, seg, q in todo:
         if CANCEL.is_set():
             log("Durduruldu.")
             break
+        prov = next((p for p in provs if discover.quota_left(con, p)[0] > 0), None)
+        if not prov:
+            log("  Tüm arama servislerinin bu dönemki hakkı doldu; sonraki turda devam edilir.")
+            break
+        period = discover.quota_left(con, prov)[1]
         try:
-            res = discover.search(prov, q, cc, 20 if prov == "brave" else 10)
+            res = discover.search(prov, q, cc, 20 if prov in ("brave", "tavily") else 10)
         except urllib.error.HTTPError as e:
-            log(f"  ! {prov} HTTP {e.code}: " + ("anahtar geçersiz ya da yetkisiz" if e.code in (401, 403) else "limit aşıldı, sonra tekrar deneyin" if e.code == 429 else str(e)))
-            if e.code in (401, 403, 429):
-                break
+            why = ("anahtar geçersiz ya da kredi bitti" if e.code in (400, 401, 402, 403, 432, 433) else
+                   "hız sınırı, sonra tekrar denenecek" if e.code == 429 else str(e))
+            log(f"  ! {prov} HTTP {e.code}: {why}" + (" → sıradaki servise geçiliyor" if e.code != 429 else ""))
+            if e.code != 429:
+                discover.exhaust(con, prov, period)
+                con.commit()
             continue
         except Exception as e:
             log(f"  ! {e}")
@@ -1303,7 +1312,7 @@ def auto_cycle(log=print):
              ("Ürün kanıtı (etiketinde kakao olan markalar)", lambda: fresh_run("off", lambda cc: cmd_harvest_products(N(country=cc, pages=8)))),
              ("Wikidata gıda sanayi firmaları", lambda: fresh_run("wd", lambda cc: cmd_harvest_wikidata(N(country=cc)))),
              ("Harita: fabrikalar (yerel dillerde)", lambda: fresh_run("osm", lambda cc: cmd_harvest_osm(N(country=cc, segments=None)))),
-             ("Arama motoru", lambda: fresh_run("web", lambda cc: cmd_discover(N(country=cc, segments="", max_queries=30)))
+             ("Arama motoru", lambda: fresh_run("web", lambda cc: cmd_discover(N(country=cc, segments="", max_queries=50)))
               if discover.provider() else log("  anahtar yok, atlandı")),
              ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=fc))),
              ("Puanlama ve çeviri", lambda: (cmd_score(N()), cmd_translate(N(limit=40, min_score=50)))),

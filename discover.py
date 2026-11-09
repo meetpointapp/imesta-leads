@@ -9,6 +9,7 @@ Arama sonuç sayfalarını doğrudan kazımayız (şartlar yasaklıyor); yalnız
 import datetime as dt
 import json
 import re
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -108,8 +109,16 @@ def clean_title(title, host):
     return (n if 2 <= len(n) <= 70 else host.split(".")[0].title())[:70]
 
 
+# Toptancılar şehirde ilan verir: ülke geneli sorgulardan sonra büyük şehirlerle de aranır (sonraki turlarda sırayla)
+CITIES = {"RU": ["Москва", "Санкт-Петербург", "Новосибирск", "Екатеринбург", "Казань", "Краснодар", "Ростов-на-Дону", "Самара"],
+          "BY": ["Минск", "Гомель", "Брест"], "KZ": ["Алматы", "Астана", "Шымкент", "Караганда"], "UZ": ["Ташкент", "Самарканд", "Наманган"],
+          "KG": ["Бишкек", "Ош"], "TJ": ["Душанбе", "Худжанд"], "TM": ["Ашхабад"], "AZ": ["Bakı", "Gəncə"], "MN": ["Ulaanbaatar"],
+          "IR": ["تهران", "تبریز", "مشهد", "اصفهان"], "IQ": ["بغداد", "أربيل", "البصرة"], "SY": ["دمشق", "حلب"], "JO": ["عمان", "إربد"],
+          "EG": ["القاهرة", "الإسكندرية"], "MA": ["Casablanca", "Fès", "Tanger"], "DZ": ["Alger", "Oran", "Constantine"]}
+
+
 def build_queries(countries, segments=None):
-    """[(ülke, segment, sorgu)] — önce dağıtıcılar ve bisküvi/fırın, her ülke için yerel dil + İngilizce."""
+    """[(ülke, segment, sorgu)] — önce dağıtıcılar ve bisküvi/fırın, her ülke için yerel dil + İngilizce; en sonda şehir bazlı toptancı sorguları."""
     segs = [s for s in SEG_ORDER if not segments or s in segments]
     out = []
     for seg in segs:
@@ -121,6 +130,10 @@ def build_queries(countries, segments=None):
             if lang != "en":  # birçok firma İngilizce de yayın yapar (özellikle ihracatçılar/distribütörler)
                 en = TERMS["en"][seg][0]
                 out.append((cc, seg, f"{en} {COUNTRY_EN.get(cc, cc)}"))
+    if "distributor" in segs:
+        for cc in countries:
+            terms = TERMS.get(LANG_OF.get(cc, "en"), TERMS["en"])["distributor"][:2]
+            out += [(cc, "distributor", f"{t} {city}") for city in CITIES.get(cc, []) for t in terms]
     seen, uniq = set(), []
     for q in out:
         if q[2] not in seen:
@@ -129,12 +142,27 @@ def build_queries(countries, segments=None):
     return uniq
 
 
-def provider():
+# Kota: (miktar, dönem) — dönem "month" her ay, "day" her gün yenilenir, "all" tek seferlik hak
+QUOTA = {"serper": (2500, "all"), "tavily": (1000, "month"), "brave": (1000, "month"), "google": (100, "day")}
+
+
+def providers():
+    """Tanımlı arama servisleri, kullanım sırasıyla. Serper (ülkeye özel Google sonuçları) önce, bitince Tavily (her ay yenilenir)."""
+    out = []
+    if secrets_util.get("serper_api_key"):
+        out.append("serper")
+    if secrets_util.get("tavily_api_key"):
+        out.append("tavily")
     if secrets_util.get("brave_api_key"):
-        return "brave"
+        out.append("brave")
     if secrets_util.get("google_api_key") and secrets_util.get("google_cx"):
-        return "google"
-    return None
+        out.append("google")
+    return out
+
+
+def provider():
+    p = providers()
+    return p[0] if p else None
 
 
 def _get_json(url, headers=None, timeout=30):
@@ -143,9 +171,31 @@ def _get_json(url, headers=None, timeout=30):
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
+def _post_json(url, body, headers=None, timeout=30):
+    req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
+                                 headers={"User-Agent": UA, "Accept": "application/json", "Content-Type": "application/json", **(headers or {})})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
+
+
 def search(prov, query, country=None, count=10):
     """[{'title','url','snippet'}] döner."""
     lang = LANG_OF.get(country or "", "en")
+    if prov == "serper":  # Google sonuçları; gl=ülke, hl=dil: "какао порошок оптом" Kazakistan'daki Google'da aranır
+        body = {"q": query, "num": min(count, 10), **({"gl": country.lower()} if country and len(country) == 2 else {}), "hl": lang}
+        d = _post_json("https://google.serper.dev/search", body, {"X-API-KEY": secrets_util.get("serper_api_key")})
+        return [{"title": r.get("title", ""), "url": r.get("link", ""), "snippet": r.get("snippet", "")} for r in d.get("organic", [])]
+    if prov == "tavily":
+        body = {"query": query, "max_results": min(count, 20), "search_depth": "basic", "topic": "general"}
+        name = COUNTRY_EN.get(country or "", "").lower()
+        hdr = {"Authorization": "Bearer " + secrets_util.get("tavily_api_key")}
+        try:
+            d = _post_json("https://api.tavily.com/search", {**body, **({"country": name} if name else {})}, hdr)
+        except urllib.error.HTTPError as e:
+            if e.code != 400 or not name:
+                raise
+            d = _post_json("https://api.tavily.com/search", body, hdr)  # ülke adı servisin listesinde yoksa ülkesiz dene
+        return [{"title": r.get("title", ""), "url": r.get("url", ""), "snippet": r.get("content", "")} for r in d.get("results", [])]
     if prov == "brave":
         q = urllib.parse.urlencode({"q": query, "count": min(count, 20), "search_lang": lang if lang != "pt" else "pt-br", **({"country": country.lower()} if country and len(country) == 2 else {})})
         d = _get_json("https://api.search.brave.com/res/v1/web/search?" + q, {"X-Subscription-Token": secrets_util.get("brave_api_key")})
@@ -159,11 +209,18 @@ def search(prov, query, country=None, count=10):
 
 
 def quota_left(con, prov):
-    """Kalan sorgu hakkı (kaba): Brave ayda 2000, Google günde 100."""
+    """Kalan sorgu hakkı (kaba, bu sistemin kullandığına göre) ve sayaç dönemi."""
     con.execute("CREATE TABLE IF NOT EXISTS api_usage(period TEXT, provider TEXT, n INTEGER DEFAULT 0, PRIMARY KEY(period, provider))")
-    period = dt.date.today().strftime("%Y-%m") if prov == "brave" else dt.date.today().isoformat()
+    limit, per = QUOTA.get(prov, (100, "day"))
+    period = {"all": "all", "month": dt.date.today().strftime("%Y-%m")}.get(per, dt.date.today().isoformat())
     n = (con.execute("SELECT n FROM api_usage WHERE period=? AND provider=?", (period, prov)).fetchone() or [0])[0]
-    return (2000 if prov == "brave" else 100) - n, period
+    return limit - n, period
+
+
+def exhaust(con, prov, period):
+    """Servis 'kredi bitti / yetkisiz' dediğinde bu dönemin hakkını bitmiş say (bir sonraki servise geçilir)."""
+    limit = QUOTA.get(prov, (100, "day"))[0]
+    con.execute("INSERT INTO api_usage(period,provider,n) VALUES(?,?,?) ON CONFLICT(period,provider) DO UPDATE SET n=?", (period, prov, limit, limit))
 
 
 def use_quota(con, prov, period):

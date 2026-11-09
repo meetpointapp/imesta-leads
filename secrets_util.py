@@ -3,7 +3,7 @@ import json
 import os
 
 PATH = os.environ.get("LEADS_SECRETS") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "secrets.json")
-KEYS = ["brave_api_key", "google_api_key", "google_cx", "anthropic_api_key", "libretranslate_url", "libretranslate_key"]
+KEYS = ["serper_api_key", "tavily_api_key", "brave_api_key", "google_api_key", "google_cx", "anthropic_api_key", "libretranslate_url", "libretranslate_key"]
 
 
 def load():

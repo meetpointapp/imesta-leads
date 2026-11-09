@@ -49,7 +49,7 @@ Hedef: Google'da elle aramak yerine, **kakaoyu hammadde olarak satın alacak fir
 3. **Alıcı tipi** her sitede otomatik belirlenir: *kakao kullanan üretici* (bisküvi, gofret, kek, dondurma, süt, tahıl, ezme, şekerleme), *toptancı/distribütör*, *küçük/butik*, *perakende dükkân* (fırsat değil), *kakao işleyici = rakip* (fırsat değil).
 4. **Puan** = firma tipi + ürünler + kakao ilgisi + ölçek (50–2000 çalışan en iyi) + B2B sinyali + ulaşılabilirlik (satın alma kişisi, e-posta) + pazar büyüklüğü (Comtrade).
 
-Arama motoru keşfi için ücretsiz Brave Search ya da Google CSE anahtarı **Ayarlar** sayfasından eklenir (anahtarsız da çalışır; o zaman harita + Wikidata + hazır liste kullanılır). Çeviri anahtarsız ücretsiz MyMemory ile; Claude/LibreTranslate anahtarı isteğe bağlı.
+Arama motoru keşfi için kart istemeyen ücretsiz bir **Serper** (serper.dev, ülkeye özel Google sonuçları, kayıtta ~2.500 arama) ya da **Tavily** (app.tavily.com, her ay ~1.000 arama) anahtarı **Ayarlar** sayfasından eklenir; ikisi birlikte tanımlanırsa önce Serper kullanılır, hakkı bitince Tavily'ye geçilir. Brave artık kart istiyor, Google'ın servisi yeni kullanıcıya kapalı (anahtarsız da çalışır; o zaman harita + Wikidata + hazır liste kullanılır). Çeviri anahtarsız ücretsiz MyMemory ile; Claude/LibreTranslate anahtarı isteğe bağlı.
 
 ## Derin veri toplama (iletişim bilgileri)
 

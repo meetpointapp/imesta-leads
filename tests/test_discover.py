@@ -112,7 +112,40 @@ class T(unittest.TestCase):
             leads.cmd_discover(argparse.Namespace(country="FR", segments="", max_queries=5))
         finally:
             sys.stdout = old
-        self.assertIn("limit", out.getvalue())
+        self.assertIn("hız sınırı", out.getvalue())
+
+    def test_serper_then_tavily(self):
+        keys = {"serper_api_key": "serper-key", "tavily_api_key": "tvly-key"}
+        secrets_util.get = lambda n: keys.get(n, "")
+        self.assertEqual(discover.providers(), ["serper", "tavily"])
+        calls = []
+
+        def fake(req, timeout=0):
+            body = json.loads(req.data.decode())
+            calls.append((req.full_url, body))
+            if "serper" in req.full_url:
+                assert req.headers.get("X-api-key") == "serper-key"
+                if len(calls) > 1:  # ilk aramadan sonra kredi biter
+                    raise urllib.error.HTTPError(req.full_url, 400, "Not enough credits", {}, None)
+                return R({"organic": [{"title": "Оптовик Сырье | Главная", "link": "https://optovik-syrye.kz/", "snippet": "Какао порошок оптом"}]})
+            assert req.headers.get("Authorization") == "Bearer tvly-key"
+            return R({"results": [{"title": "Кондитерское сырье Алматы", "url": "https://konditer-almaty.kz/ru", "content": "Ингредиенты оптом"}]})
+        urllib.request.urlopen = fake
+        out = io.StringIO()
+        sys.stdout, old = out, sys.stdout
+        try:
+            leads.cmd_discover(argparse.Namespace(country="KZ", segments="distributor", max_queries=3))
+        finally:
+            sys.stdout = old
+        self.assertEqual((calls[0][1]["gl"], calls[0][1]["hl"]), ("kz", "ru"))  # Kazakistan Google'ında Rusça
+        self.assertIn("какао порошок оптом", calls[0][1]["q"])
+        self.assertTrue(any("tavily" in u and b.get("country") == "kazakhstan" for u, b in calls))
+        self.assertIn("sıradaki servise", out.getvalue())
+        con = leads.db()
+        got = {r[0]: r[1] for r in con.execute("SELECT domain, segment FROM companies WHERE country='KZ' AND source='search'")}
+        self.assertEqual(got, {"optovik-syrye.kz": "distributor", "konditer-almaty.kz": "distributor"})
+        self.assertLessEqual(discover.quota_left(con, "serper")[0], 0)  # bitmiş sayılır, sonraki turda tekrar denenmez
+        con.close()
 
     def test_translate_cache_and_fallback(self):
         secrets_util.get = lambda n: ""

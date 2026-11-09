@@ -807,7 +807,7 @@ def page_firms(con, q):
     h += auto_status(con)
     if not leads.discover.provider():
         h += ('<div class="warnbar">Toptancıları bulmanın en güçlü yolu arama motoru: "какао порошок оптом", "كاكاو بودرة بالجملة" gibi yerel dilde aramalar. '
-              '<a href="/settings">Ayarlar</a>\'dan ücretsiz bir arama anahtarı (Brave ya da Google) eklersen otomatik tarama bunları da yapar.</div>')
+              '<a href="/settings#arama">Ayarlar</a>\'dan kartsız ücretsiz bir Tavily ya da Serper anahtarı eklersen otomatik tarama bunları da yapar.</div>')
     seg = lambda v, label, n: (f'<a class="{"on" if view == v else ""}" href="/{build_qs(q, v=v or None, page=None)}">{label} <b>{n}</b></a>')  # noqa: E731
     h += '<div class="segtabs">' + seg("", "Yeni adaylar", n_new) + seg("crm", "CRM'dekiler", n_crm) + seg("all", "Tümü", n_new + n_crm) + "</div>"
     tabs = f'<a class="{"on" if not cc else ""}" href="/{build_qs(q, c=None, page=None)}">Tüm ülkeler <b>{n_all}</b></a>'
@@ -1320,12 +1320,19 @@ def page_settings(con, q):
           ("".join(f'<div class="tk"><div class="t">{esc(b["name"])}<small>{esc((b["t"] or "")[:10])}</small></div><form class="pl" method="post" action="/unblock">'
                    f'<input type="hidden" name="name" value="{esc(b["name"])}"><button class="ghost sm">Engeli kaldır</button></form></div>' for b in blocked)
            or '<p class="muted" style="margin:0">Engellenen firma yok.</p>') + "</div>")
-    h += f'<div class="card" style="margin-bottom:16px"><h3>1 · Arama motoru (Google\'a yazmanın otomatiği) {"✔ " + prov if prov else ""}</h3>'
-    h += ('<p class="muted" style="margin-top:0">Ülke × sektör × yerel dilde yüzlerce arama yapar ("Keks Hersteller Deutschland", "fabricant biscuits France"...) ve çıkan firma sitelerini aday olarak alır. '
-          'Arama sonuç sayfalarını kazımaz; resmî API kullanır. <b>Birini</b> tanımlamanız yeterli.</p>')
-    h += row("brave_api_key", "Brave Search API anahtarı (ayda ~2000 ücretsiz sorgu)", 'Alma: <a href="https://api.search.brave.com/" target=_blank rel=noopener>api.search.brave.com</a> → kayıt ol → ücretsiz plan → API key oluştur. (Kayıt sırasında kart bilgisi istenebilir; güncel plan ve limitleri sitede kontrol edin.)')
-    h += row("google_api_key", "Google API anahtarı (günde 100 ücretsiz sorgu)", 'Google Cloud Console → "Custom Search API"yi etkinleştir → Kimlik bilgileri → API anahtarı.')
-    h += row("google_cx", "Google arama motoru kimliği (cx)", '<a href="https://programmablesearchengine.google.com/" target=_blank rel=noopener>programmablesearchengine.google.com</a> → yeni arama motoru → "Tüm web\'de ara" → Arama motoru kimliği.', secret=False)
+    provs = leads.discover.providers()
+    left = " · ".join(f"{p}: ~{max(0, leads.discover.quota_left(con, p)[0])} hak" for p in provs)
+    h += f'<div class="card" style="margin-bottom:16px" id="arama"><h3>1 · Arama motoru (toptancıları bulmanın en güçlü yolu) {"✔ " + esc(left) if provs else ""}</h3>'
+    h += ('<p class="muted" style="margin-top:0">Otomatik tarama her ülkede yerel dilde arar ("какао порошок оптом Казахстан", "كاكاو بودرة بالجملة مصر"…) ve çıkan firma sitelerini aday olarak alır. '
+          'Resmî API kullanır, arama sayfalarını kazımaz. İkisini birden tanımlamanı öneririm: önce Serper kullanılır, hakkı bitince kendiliğinden Tavily\'ye geçilir.</p>')
+    h += row("serper_api_key", "Serper anahtarı (Google sonuçları, ülkeye özel; kayıtta ~2.500 ücretsiz arama, tek seferlik, kart istemez)",
+             'Alma: <a href="https://serper.dev/" target=_blank rel=noopener>serper.dev</a> → Sign up (Google hesabıyla) → Dashboard → API Key\'i kopyala.')
+    h += row("tavily_api_key", "Tavily anahtarı (her ay ~1.000 ücretsiz arama, kart istemez)",
+             'Alma: <a href="https://app.tavily.com/" target=_blank rel=noopener>app.tavily.com</a> → Sign up → Overview sayfasındaki "tvly-…" ile başlayan API Key\'i kopyala.')
+    h += ('<details style="margin-top:6px"><summary>Diğer servisler (ücretli ya da kapanıyor)</summary>'
+          + row("brave_api_key", "Brave Search API anahtarı (ayda 5$ kredi, kart ister)", '<a href="https://api.search.brave.com/" target=_blank rel=noopener>api.search.brave.com</a>')
+          + row("google_api_key", "Google API anahtarı (yeni kullanıcıya kapalı; 1 Ocak 2027'de kapanıyor)", 'Sadece daha önce aldıysan.')
+          + row("google_cx", "Google arama motoru kimliği (cx)", "Sadece daha önce aldıysan.", secret=False) + "</details>")
     h += '</div><div class="card"><h3>2 · Çeviri (açıklamalar Türkçeye)</h3>'
     h += ('<p class="muted" style="margin-top:0">Hiçbiri tanımlı değilse ücretsiz MyMemory kullanılır (günlük sınırlı). Firma adları ve özetler anahtarsız da çevrilir (sektör sözlüğüyle).</p>')
     h += row("anthropic_api_key", "Claude API anahtarı (isteğe bağlı, çok daha kaliteli çeviri; kullanım başına çok düşük ücretli)", '<a href="https://console.anthropic.com/" target=_blank rel=noopener>console.anthropic.com</a> → API Keys. Ücretsiz kalmak istiyorsanız boş bırakın.')
