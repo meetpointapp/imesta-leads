@@ -1008,9 +1008,22 @@ def cmd_enrich(a):
           f"{tot['people']} kişi, {tot['socials']} sosyal hesap.", flush=True)
 
 
+SEARCH_DAILY_CAP = 60  # günde en çok bu kadar arama (ücretsiz kotalar birkaç günde bitmesin); config: daily_search_cap
+REQUERY_DAYS = 90  # bir sorgu bu kadar gün sonra yeniden yapılır (yeni firmalar çıkar)
+
+
+def search_plan_status(con, countries=None):
+    """(yapılan, toplam) — odak ülkelerin arama planında son REQUERY_DAYS günde yapılmış sorgu sayısı."""
+    con.execute("CREATE TABLE IF NOT EXISTS discover_queries(query TEXT PRIMARY KEY, country TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP, n INTEGER)")
+    plan = discover.build_queries(countries or focus_countries())
+    done = {r[0] for r in con.execute("SELECT query FROM discover_queries WHERE ts>=datetime('now', ?)", (f"-{REQUERY_DAYS} day",))}
+    return sum(1 for q in plan if discover.query_key(q) in done), len(plan)
+
+
 def cmd_discover(a):
-    """Arama motoru (Serper, Tavily, Brave ya da Google resmî API) ile ülke × sektör × yerel dil sorgularıyla yeni alıcı adayları bulur.
-    Bir servisin hakkı biterse ya da anahtarı reddedilirse sıradaki servise geçer."""
+    """Arama motoru (Serper, Tavily, Brave ya da Google resmî API) ile önce çikolata fabrikaları, sonra toptancılar ve diğer alıcılar için
+    yerel dilde, şehir şehir arar. Liste sorgularında çıkan sektör listesi / dernek üye listesi sayfalarını açıp içindeki firma bağlantılarını aday yapar.
+    Bir servisin hakkı biterse sıradakine geçer; günlük arama sınırı ücretsiz kotaları aylara yayar."""
     con = db()
     log = lambda m: print(m, flush=True)  # noqa: E731
     provs = discover.providers()
@@ -1020,10 +1033,14 @@ def cmd_discover(a):
     ccs = [c.strip().upper() for c in (a.country or "").split(",") if c.strip().upper() in COUNTRIES]
     segs = [s.strip() for s in (getattr(a, "segments", "") or "").split(",") if s.strip()] or None
     con.execute("CREATE TABLE IF NOT EXISTS discover_queries(query TEXT PRIMARY KEY, country TEXT, ts TEXT DEFAULT CURRENT_TIMESTAMP, n INTEGER)")
-    done = {r[0] for r in con.execute("SELECT query FROM discover_queries")}
+    done = {r[0] for r in con.execute("SELECT query FROM discover_queries WHERE ts>=datetime('now', ?)", (f"-{REQUERY_DAYS} day",))}
     left = sum(max(0, discover.quota_left(con, p)[0]) for p in provs)
-    todo = [q for q in discover.build_queries(ccs, segs) if q[2] not in done][:max(0, min(int(getattr(a, "max_queries", 0) or 40), left))]
-    log(f"{', '.join(provs)}: {len(todo)} sorgu çalıştırılacak (kalan hak ~{left}).")
+    day = f"search_{today()}"
+    used = int(meta_get(con, day, 0) or 0)
+    cap = int(config().get("daily_search_cap") or SEARCH_DAILY_CAP)
+    todo = [q for q in discover.build_queries(ccs, segs) if discover.query_key(q) not in done]
+    todo = todo[:max(0, min(int(getattr(a, "max_queries", 0) or 40), left, cap - used))]
+    log(f"{', '.join(provs)}: {len(todo)} sorgu çalıştırılacak (kalan hak ~{left}, bugün {used}/{cap}).")
     total = 0
     for cc, seg, q in todo:
         if CANCEL.is_set():
@@ -1034,8 +1051,9 @@ def cmd_discover(a):
             log("  Tüm arama servislerinin bu dönemki hakkı doldu; sonraki turda devam edilir.")
             break
         period = discover.quota_left(con, prov)[1]
+        base, page, listing = discover.parse_seg(seg)
         try:
-            res = discover.search(prov, q, cc, 20 if prov in ("brave", "tavily") else 10)
+            res = discover.search(prov, q, cc, 20 if prov in ("brave", "tavily") else 10, page)
         except urllib.error.HTTPError as e:
             why = ("anahtar geçersiz ya da kredi bitti" if e.code in (400, 401, 402, 403, 432, 433) else
                    "hız sınırı, sonra tekrar denenecek" if e.code == 429 else str(e))
@@ -1048,18 +1066,36 @@ def cmd_discover(a):
             log(f"  ! {e}")
             continue
         discover.use_quota(con, prov, period)
-        cands = discover.candidates(res)
-        n = 0
-        for host, name, snippet, url in cands:
-            cid, is_new = upsert_company(con, name, cc, None, url, seg, "search")
-            if cid and is_new:
-                fill_company(con, cid, description=snippet)
-                n += 1
-        con.execute("INSERT OR REPLACE INTO discover_queries(query,country,n) VALUES(?,?,?)", (q, cc, len(cands)))
+        used += 1
+        meta_set(con, day, used)
+        n, found = 0, 0
+        if listing:  # liste/dernek/sıralama sayfalarını aç, içindeki firma bağlantılarını al
+            for r in res[:5]:
+                if CANCEL.is_set() or not r.get("url", "").startswith("http"):
+                    continue
+                try:
+                    final, page_html = crawler.fetch(r["url"], timeout=15)
+                except Exception:
+                    continue
+                links = discover.list_links(page_html, final, cc)
+                found += len(links)
+                for host, name, url in links:
+                    cid, is_new = upsert_company(con, name, cc, None, url, base, "liste", notes=f"Kaynak liste: {final[:200]}")
+                    n += bool(cid and is_new)
+        else:
+            cands = discover.candidates(res)
+            found = len(cands)
+            for host, name, snippet, url in cands:
+                cid, is_new = upsert_company(con, name, cc, None, url, base, "search")
+                if cid and is_new:
+                    fill_company(con, cid, description=snippet)
+                    n += 1
+        con.execute("INSERT OR REPLACE INTO discover_queries(query,country,n,ts) VALUES(?,?,?,CURRENT_TIMESTAMP)", (discover.query_key((cc, seg, q)), cc, found))
         con.commit()
         total += n
-        log(f"  [{cc}] {q}: {len(cands)} site, {n} yeni")
-        CANCEL.wait(1.1)  # API nezaketi (Brave: saniyede 1 istek)
+        kind = " [liste]" if listing else f" [sayfa {page}]" if page > 1 else ""
+        log(f"  [{cc}] {q}{kind}: {found} site, {n} yeni")
+        CANCEL.wait(1.1)  # API nezaketi
     log(f"Arama keşfi bitti: {total} yeni aday firma. Sıradaki adım: derin tarama (alıcı olup olmadığını site belirler).")
 
 
@@ -1253,6 +1289,8 @@ ARCHIVE_RULES = [  # (açıklama, koşul) — yalnızca henüz temas edilmemiş 
     ("perakende dükkân / kafe", "buyer_type='retail'"),
     ("kakao işleyici (rakip)", "buyer_type='competitor'"),
     ("haritadan gelen dükkân/butik (sanayi alıcısı değil)", "segment='retail_craft' AND IFNULL(buyer_type,'unknown') NOT IN ('industrial','distributor')"),
+    ("gıda firması olmayan site", "enrich_v>=2 AND enrich_error IS NULL AND IFNULL(cocoa_signal,0)<10 AND IFNULL(categories,'{}') IN ('{}','') "
+     "AND IFNULL(buyer_type,'unknown') IN ('unknown','retail')"),
     # hazır listedeki bilinen alıcılar korunur: İran gibi ülkelerde siteler yurt dışından açılmayabilir
     ("sitesi açılmayan, iletişimi olmayan", "enrich_error IS NOT NULL AND IFNULL(source,'')<>'seed' AND IFNULL(phone,'')='' AND NOT EXISTS("
      "SELECT 1 FROM contacts k WHERE k.company_id=companies.id AND k.email_ok=1)"),
@@ -1351,7 +1389,7 @@ def auto_cycle(log=print):
              ("Ürün kanıtı (etiketinde kakao olan markalar)", lambda: fresh_run("off", lambda cc: cmd_harvest_products(N(country=cc, pages=8)))),
              ("Wikidata gıda sanayi firmaları", lambda: fresh_run("wd", lambda cc: cmd_harvest_wikidata(N(country=cc)))),
              ("Harita: fabrikalar (yerel dillerde)", lambda: fresh_run("osm", lambda cc: cmd_harvest_osm(N(country=cc, segments=None)))),
-             ("Arama motoru", lambda: fresh_run("web", lambda cc: cmd_discover(N(country=cc, segments="", max_queries=50)))
+             ("Arama motoru: çikolata fabrikaları, listeler, toptancılar", lambda: cmd_discover(N(country=",".join(batch), segments="", max_queries=40))
               if discover.provider() else log("  anahtar yok, atlandı")),
              ("Site taraması: iletişim, kişiler, firma tipi", lambda: cmd_enrich(N(limit=150, workers=8, pages=8, force=False, countries=fc))),
              ("Puanlama ve çeviri", lambda: (cmd_score(N()), cmd_translate(N(limit=40, min_score=50)))),
@@ -1429,6 +1467,9 @@ def score_company(con, c, imp):
     if ev:
         s += min(18, 8 + 2 * ev.get("n", 1))
         reasons.insert(0, "Kanıt: " + products.evidence_text(ev))
+    if bt == "industrial" and (c["segment"] in ("chocolate_maker", "confectionery") or cats.get("chocolate", 0) >= 3) and c["business_type"] != "wholesale":
+        s += 8
+        reasons.insert(1 if ev else 0, "Çikolata/şekerleme fabrikası: kakao yağı, kakao likörü ve kakao tozunun en büyük alıcısı")
     if not c["website"] and not ks and not c["phone"]:  # ulaşılamayan aday, ulaşılabilenlerin arkasında sıralansın
         s -= 15
         reasons.append("Web sitesi ve iletişim bilgisi henüz bulunamadı")

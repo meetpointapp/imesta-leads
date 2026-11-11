@@ -781,7 +781,9 @@ def page_firms(con, q):
         w.append("id IN (SELECT company_id FROM contacts WHERE email_ok=1)")
     if g("k"):
         w.append("evidence IS NOT NULL")
-    if g("t") == "toptan":  # kakao tozunu yeniden satan toptancı/distribütörler
+    if g("t") == "cikolata":  # en önemli müşteri: kakao alıp çikolata/şekerleme üreten fabrikalar
+        w.append("IFNULL(buyer_type,'')<>'distributor' AND (segment IN ('chocolate_maker','confectionery') OR categories LIKE '%\"chocolate\"%')")
+    elif g("t") == "toptan":  # kakao tozunu yeniden satan toptancı/distribütörler
         w.append("(buyer_type='distributor' OR segment IN ('distributor','bakery_ingredient'))")
     elif g("t") == "uretici":
         w.append("IFNULL(buyer_type,'')<>'distributor' AND segment NOT IN ('distributor','bakery_ingredient')")
@@ -817,7 +819,7 @@ def page_firms(con, q):
     hidden = "".join(f'<input type="hidden" name="{k}" value="{esc(g(k))}">' for k in ("v", "c") if g(k))
     h += (f'<form class="hubfilter" method="get">{hidden}<input name="q" value="{esc(g("q"))}" placeholder="Firma, site, şehir ara…">'
           f'<select name="t" onchange="this.form.submit()" aria-label="Alıcı tipi">'
-          f'{opts([("", "Üretici + toptancı"), ("uretici", "Sadece üreticiler"), ("toptan", "Sadece toptancılar")], g("t"))}</select>'
+          f'{opts([("", "Üretici + toptancı"), ("cikolata", "Çikolata / şekerleme fabrikaları"), ("uretici", "Sadece üreticiler"), ("toptan", "Sadece toptancılar")], g("t"))}</select>'
           f'<label class="chip"><input type="checkbox" name="e" value="1"{" checked" if g("e") else ""} onchange="this.form.submit()"> {icon("mail", 14)} e-postası var</label>'
           f'<label class="chip"><input type="checkbox" name="k" value="1"{" checked" if g("k") else ""} onchange="this.form.submit()"> 🍫 ürün kanıtlı</label>'
           f'<select name="s" onchange="this.form.submit()">{opts([("", "Puana göre"), ("yeni", "Yeni bulunanlar önce")], g("s"))}</select>'
@@ -1322,9 +1324,15 @@ def page_settings(con, q):
            or '<p class="muted" style="margin:0">Engellenen firma yok.</p>') + "</div>")
     provs = leads.discover.providers()
     left = " · ".join(f"{p}: ~{max(0, leads.discover.quota_left(con, p)[0])} hak" for p in provs)
+    pdone, ptotal = leads.search_plan_status(con)
+    used = int(leads.meta_get(con, f"search_{leads.today()}", 0) or 0)
+    cap = int(cfg.get("daily_search_cap") or leads.SEARCH_DAILY_CAP)
     h += f'<div class="card" style="margin-bottom:16px" id="arama"><h3>1 · Arama motoru (toptancıları bulmanın en güçlü yolu) {"✔ " + esc(left) if provs else ""}</h3>'
     h += ('<p class="muted" style="margin-top:0">Otomatik tarama her ülkede yerel dilde arar ("какао порошок оптом Казахстан", "كاكاو بودرة بالجملة مصر"…) ve çıkan firma sitelerini aday olarak alır. '
           'Resmî API kullanır, arama sayfalarını kazımaz. İkisini birden tanımlamanı öneririm: önce Serper kullanılır, hakkı bitince kendiliğinden Tavily\'ye geçilir.</p>')
+    h += (f'<p style="margin:0 0 12px"><b>Arama planı:</b> {pdone} / {ptotal} sorgu yapıldı (son {leads.REQUERY_DAYS} gün) · bugün {used}/{cap} arama. '
+          f'<small class="muted">Önce çikolata fabrikaları ve sektör listeleri, sonra toptancılar, şehirler ve diğer alıcılar. Sorgular {leads.REQUERY_DAYS} günde bir yenilenir.</small></p>'
+          f'<div class="meter" style="margin-bottom:14px"><i style="width:{100 * pdone // max(ptotal, 1)}%"></i></div>')
     h += row("serper_api_key", "Serper anahtarı (Google sonuçları, ülkeye özel; kayıtta ~2.500 ücretsiz arama, tek seferlik, kart istemez)",
              'Alma: <a href="https://serper.dev/" target=_blank rel=noopener>serper.dev</a> → Sign up (Google hesabıyla) → Dashboard → API Key\'i kopyala.')
     h += row("tavily_api_key", "Tavily anahtarı (her ay ~1.000 ücretsiz arama, kart istemez)",

@@ -146,6 +146,25 @@ class T(unittest.TestCase):
         finally:
             leads.CONFIG_PATH = orig
 
+    def test_chocolate_factory_ranked_first_and_non_food_archived(self):
+        con = leads.db()
+        choco, _ = leads.upsert_company(con, "Шоколадная фабрика Тест", "RU", None, "https://choco-test.ru", "chocolate_maker", "liste")
+        bisc, _ = leads.upsert_company(con, "Печенье Тест", "RU", None, "https://pech-test.ru", "biscuit_bakery", "liste")
+        news, _ = leads.upsert_company(con, "Новости Города", "RU", None, "https://news-test.ru", "chocolate_maker", "liste")
+        for cid, cats in ((choco, {"chocolate": 6, "confectionery": 3}), (bisc, {"biscuit": 5})):
+            con.execute("UPDATE companies SET buyer_type='industrial', business_type='manufacturer', categories=?, cocoa_signal=40, enrich_v=2 WHERE id=?",
+                        (json.dumps(cats), cid))
+        con.execute("UPDATE companies SET buyer_type='unknown', categories='{}', cocoa_signal=0, enrich_v=2 WHERE id=?", (news,))
+        con.commit()
+        for cid in (choco, bisc):
+            leads.score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone(), {})
+        s = {r[0]: (r[1], r[2]) for r in con.execute("SELECT id, score, fit_reasons FROM companies WHERE id IN (?,?)", (choco, bisc))}
+        self.assertGreater(s[choco][0], s[bisc][0])
+        self.assertIn("Çikolata/şekerleme fabrikası", s[choco][1])
+        leads.auto_archive(con)  # haber sitesi gibi gıda dışı siteler listeden kalkar
+        self.assertEqual([r[0] for r in con.execute("SELECT id FROM companies WHERE archived=1 AND id IN (?,?,?)", (choco, bisc, news))], [news])
+        con.close()
+
     def test_score_mentions_market_and_fta(self):
         con = leads.db()
         cid, _ = leads.upsert_company(con, "Bisco", "EG", None, "https://bisco.eg", "biscuit_bakery", "test")

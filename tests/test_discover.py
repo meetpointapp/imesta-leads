@@ -114,6 +114,51 @@ class T(unittest.TestCase):
             sys.stdout = old
         self.assertIn("hız sınırı", out.getvalue())
 
+    def test_list_mining_page2_and_daily_cap(self):
+        keys = {"serper_api_key": "serper-key"}
+        secrets_util.get = lambda n: keys.get(n, "")
+        bodies, fetched = [], []
+        listing = ('<h1>Кондитерские фабрики Беларуси</h1><a href="https://kommunarka.by/">Коммунарка</a>'
+                   '<a href="https://spartak.by/">Спартак</a><a href="https://vk.com/k">ВКонтакте</a><a href="https://spartak.by/">Подробнее</a>')
+
+        def fake(req, timeout=0):
+            if getattr(req, "data", None):  # arama isteği
+                body = json.loads(req.data.decode())
+                bodies.append(body)
+                url = "https://rating-by.example/fabriki" if "список" in body["q"] else f"https://factory{len(bodies)}.by/"
+                return R({"organic": [{"title": "Фабрика", "link": url, "snippet": "шоколад"}]})
+            fetched.append(req.full_url)  # liste sayfasının kendisi
+            return R(listing.encode())
+        urllib.request.urlopen = fake
+        orig_fetch = leads.crawler.fetch
+        leads.crawler.fetch = lambda url, timeout=0: (url, listing)
+        old_cfg = leads.config
+        plan = len(discover.build_queries(["BY"], ["chocolate_maker"]))
+        con = leads.db()
+        leads.meta_set(con, f"search_{leads.today()}", 0)  # önceki testlerin bugünkü aramaları sayılmasın
+        con.close()
+        out = io.StringIO()
+        sys.stdout, old = out, sys.stdout
+        try:
+            leads.config = lambda: {**old_cfg(), "daily_search_cap": 20}
+            leads.cmd_discover(argparse.Namespace(country="BY", segments="chocolate_maker", max_queries=100))
+            first = len(bodies)
+            leads.config = lambda: {**old_cfg(), "daily_search_cap": 100}
+            leads.cmd_discover(argparse.Namespace(country="BY", segments="chocolate_maker", max_queries=100))  # kalanlar; yapılanlar tekrarlanmaz
+        finally:
+            sys.stdout = old
+            leads.crawler.fetch, leads.config = orig_fetch, old_cfg
+        self.assertEqual((first, len(bodies)), (20, plan))  # günlük sınır, sonra planın geri kalanı
+        self.assertIn("кондитерские фабрики Беларусь список", bodies[9]["q"])  # çikolata listeleri şehirlerden önce
+        self.assertTrue(any(b.get("page") == 2 for b in bodies[20:]))  # 2. sayfalar en sonda
+        con = leads.db()
+        got = {r[0]: (r[1], r[2]) for r in con.execute("SELECT domain, source, segment FROM companies WHERE country='BY' AND source='liste'")}
+        self.assertEqual(got, {"kommunarka.by": ("liste", "chocolate_maker"), "spartak.by": ("liste", "chocolate_maker")})
+        done, total = leads.search_plan_status(con, ["BY"])
+        self.assertEqual(done, plan)  # tüm çikolata sorguları yapıldı; diğer segmentler planda bekliyor
+        self.assertGreater(total, done)
+        con.close()
+
     def test_serper_then_tavily(self):
         keys = {"serper_api_key": "serper-key", "tavily_api_key": "tvly-key"}
         secrets_util.get = lambda n: keys.get(n, "")
