@@ -215,8 +215,11 @@ def find_emails(text, links, cf_list):
     t = OBF_DOT.sub(".", OBF_AT.sub("@", html.unescape(text)))
     t = re.sub(r"\s+(?:\(at\)|\[at\])\s+", "@", t)
     for m in EMAIL_RE.findall(t):
-        found.setdefault(m.strip(".-_").lower(), "text")
-    return [(e, v) for e, v in found.items() if not JUNK_EMAIL.search(e) and len(e) < 80]
+        e = m.strip(".-_").lower()
+        # metinde bitişik yazılmış telefonun sonu adrese yapışabilir: "56-62-71info@firma.kz" → "info@firma.kz"
+        e = re.sub(r"^[\d\-.]*\d[\d\-.]*-(?=[a-z])|^\d{2,}[\d\-.]*(?=[a-z])", "", e)
+        found.setdefault(e, "text")
+    return [(e, v) for e, v in found.items() if not JUNK_EMAIL.search(e) and len(e) < 80 and EMAIL_RE.fullmatch(e)]
 
 
 # ----------------------------------------------------------------------------- telefon

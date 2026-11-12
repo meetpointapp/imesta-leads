@@ -327,6 +327,8 @@ details.box{border:1px solid var(--line);border-radius:12px;padding:9px 13px;mar
 .fscore .score{font-size:15px;padding:5px 9px;min-width:44px}
 .fact{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 button.danger-h:hover{color:var(--bad);border-color:#e9c9bf;background:var(--bad-soft)}
+.addsites label{font-size:13.5px;color:var(--ink);display:flex;align-items:center;gap:6px;margin-bottom:8px}
+.addrow{display:flex;gap:8px;flex-wrap:wrap;align-items:stretch;margin-bottom:6px}.addrow textarea{flex:1;min-width:240px;min-height:42px}
 /* Satış */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;margin-bottom:18px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow)}
@@ -759,12 +761,62 @@ def firm_row(r, back):
             f'<div class="fscore">{score_badge(r["score"] or 0)}</div><div class="fact">{acts}</div></div>')
 
 
+ADD_JOB = {"running": False, "total": 0, "done": 0, "new": 0, "last": "", "ids": []}  # elle girilen sitelerin arka planda taranması
+
+
+def add_sites_box():
+    """Firmalar'ın üstünde: kendi bulduğun siteleri yapıştır → ekle ve tara. Toplu eklemede ilerleme."""
+    ccs = sorted(leads.focus_countries(), key=lambda k: tr_key(cname(k)))
+    prog = ""
+    if ADD_JOB["running"] or ADD_JOB["total"]:
+        pct = 100 * ADD_JOB["done"] // max(ADD_JOB["total"], 1)
+        state = (f'<b>{ADD_JOB["done"]} / {ADD_JOB["total"]} site tarandı</b> · {ADD_JOB["new"]} yeni firma' if ADD_JOB["running"]
+                 else f'<b>Bitti:</b> {ADD_JOB["total"]} site tarandı, {ADD_JOB["new"]} yeni firma eklendi')
+        prog = (f'<div style="margin-top:10px"><small>{state}{" · " + esc(ADD_JOB["last"]) if ADD_JOB["last"] else ""}</small>'
+                f'<div class="meter"><i style="width:{pct}%"></i></div></div>' + ('<script>setTimeout(()=>location.reload(),8000)</script>' if ADD_JOB["running"] else ""))
+    return (f'<form class="card addsites" method="post" action="/add-sites" style="margin-bottom:14px"><label for="sites">{icon("plus", 14)} Kendi bulduğun firmayı ekle</label>'
+            f'<div class="addrow"><textarea id="sites" name="sites" rows="1" required placeholder="Web sitesi yapıştır: firma.com — birden çok site için her satıra bir tane"></textarea>'
+            f'<select name="country" aria-label="Ülke">{opts([(k, focus.flag(k) + " " + cname(k)) for k in ccs], None, "Ülke: sitesinden bul")}</select>'
+            f'<button {"disabled" if ADD_JOB["running"] else ""}>{icon("search", 14)} Ekle ve tara</button></div>'
+            f'<small class="muted">Site taranır: ad, ülke, e-postalar, kişiler, telefon, firma tipi, puan ve Türkçe gerekçe kendiliğinden dolar. '
+            f'Tek sitede firma sayfasına gidersin (10–20 sn); çok sitede tarama arka planda sürer. Kayıtlı bir siteyi girersen yeniden taranır.</small>{prog}</form>')
+
+
+def run_add_sites(urls, country=None, ids=None):
+    """Elle girilen siteleri (ya da yüklenen listedeki firmaları) arka planda ekleyip tarar; otomatik taramadan bağımsız çalışır."""
+    ADD_JOB.update(running=True, total=len(urls or ids or []), done=0, new=0, last="", ids=[])
+
+    def work():
+        con = leads.db()
+        try:
+            for item in (urls or ids or []):
+                try:
+                    if urls:
+                        r = leads.add_by_website(con, item, country)
+                        ADD_JOB["new"] += r["new"]
+                        ADD_JOB["ids"].append(r["id"])
+                        c = con.execute("SELECT name FROM companies WHERE id=?", (r["id"],)).fetchone()
+                        ADD_JOB["last"] = f"{leads.get_domain(item)} → {c['name']}" + ("" if r["ok"] else " (site açılmadı)")
+                    else:
+                        site = con.execute("SELECT website FROM companies WHERE id=?", (item,)).fetchone()
+                        if site and site["website"]:
+                            r = leads.add_by_website(con, site["website"])
+                            ADD_JOB["last"] = leads.get_domain(site["website"])
+                except Exception as e:
+                    ADD_JOB["last"] = f"{item}: {str(e)[:80]}"
+                ADD_JOB["done"] += 1
+        finally:
+            con.close()
+            ADD_JOB["running"] = False
+    threading.Thread(target=work, daemon=True).start()
+
+
 def page_firms(con, q):
     g = lambda k: (q.get(k) or [""])[0].strip()  # noqa: E731
     fc = leads.focus_countries()
     fcs = ",".join(f"'{c}'" for c in fc)
     view = g("v") if g("v") in ("crm", "all") else ""
-    w, p = [f"IFNULL(archived,0)=0", f"country IN ({fcs})"], []
+    w, p = [f"IFNULL(archived,0)=0", f"(country IN ({fcs}) OR source='manuel')"], []
     if view == "":
         w.append("status='new'")
     elif view == "crm":
@@ -797,8 +849,8 @@ def page_firms(con, q):
                        f"WHERE {where} ORDER BY {order} LIMIT ? OFFSET ?", p + [HUB_PAGE, (page - 1) * HUB_PAGE]).fetchall()
     by_cc = dict(con.execute(f"SELECT country, COUNT(*) FROM companies WHERE {' AND '.join(base_w)} GROUP BY country").fetchall())
     n_all = sum(by_cc.values())
-    n_crm = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND country IN ({fcs}) AND status<>'new'").fetchone()[0]
-    n_new = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND country IN ({fcs}) AND status='new'").fetchone()[0]
+    n_crm = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND (country IN ({fcs}) OR source='manuel') AND status<>'new'").fetchone()[0]
+    n_new = con.execute(f"SELECT COUNT(*) FROM companies WHERE IFNULL(archived,0)=0 AND (country IN ({fcs}) OR source='manuel') AND status='new'").fetchone()[0]
     back = "/" + build_qs(q)
     h = head("Firmalar", f"Sistemin {len(fc)} odak pazarda bulduğu, kakao alabilecek firmalar. Puana göre sıralı; tıkla, incele, CRM'e kaydet ya da engelle.",
              f'<a class="btn ghost" href="/firsatlar.xlsx">{icon("download")} Excel</a><a class="btn ghost" href="/leads">Tablo / toplu işlem</a>'
@@ -806,7 +858,7 @@ def page_firms(con, q):
     if "ADINIZ" in (leads.config().get("sender_name") or "ADINIZ"):
         h += ('<div class="warnbar"><b>E-posta imzan eksik.</b> Taslaklarda "ADINIZ SOYADINIZ" yazıyor: '
               '<a href="/settings">Ayarlar → Firma ve imza bilgileri</a>.</div>')
-    h += auto_status(con)
+    h += add_sites_box() + auto_status(con)
     if not leads.discover.provider():
         h += ('<div class="warnbar">Toptancıları bulmanın en güçlü yolu arama motoru: "какао порошок оптом", "كاكاو بودرة بالجملة" gibi yerel dilde aramalar. '
               '<a href="/settings#arama">Ayarlar</a>\'dan kartsız ücretsiz bir Tavily ya da Serper anahtarı eklersen otomatik tarama bunları da yapar.</div>')
@@ -1190,8 +1242,9 @@ def page_lead(con, cid, q):
     return c["name"], h, "/leads"
 
 def page_add(con, q):
-    return "Firma ekle", head("Firma ekle", "Tek bir firmayı elle kaydet.") + f"""<form class="card" method="post" action="/add" style="max-width:820px"><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
-<div><label>Firma adı *</label><input name="name" required style="width:100%"></div><div><label>Web sitesi</label><input name="website" style="width:100%" placeholder="firma.com"></div>
+    return "Firma ekle", head("Firma ekle", "Web sitesini yazman yeterli: site taranır, ad, ülke, iletişim bilgileri, puan ve gerekçe kendiliğinden dolar.") + f"""<form class="card" method="post" action="/add" style="max-width:820px"><div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(230px,1fr))">
+<div><label>Web sitesi</label><input name="website" style="width:100%" placeholder="firma.com — yazarsan site taranır, bilgiler kendiliğinden dolar"></div>
+<div><label>Firma adı (site yoksa zorunlu)</label><input name="name" style="width:100%"></div>
 <div><label>Ülke</label><select name="country" style="width:100%">{opts([(k, focus.flag(k) + ' ' + cname(k)) for k in sorted(set(leads.focus_countries()) | ({None} - {None}), key=lambda k: tr_key(cname(k)))], None, 'Seç…')}</select></div>
 <div><label>Şehir</label><input name="city" style="width:100%"></div>
 <div><label>Segment</label><select name="segment" style="width:100%">{opts(list(SEGMENT_TR.items()))}</select></div>
@@ -1748,14 +1801,49 @@ class H(BaseHTTPRequestHandler):
             con.close()
 
     def _post(self, con, path, f, multi):
+        if path == "/add-sites":
+            urls = leads.parse_sites(f.get("sites", ""))
+            cc = f.get("country", "").upper() or None
+            if not urls:
+                return self._redirect("/", "Geçerli bir web sitesi bulunamadı (ör. firma.com)")
+            if len(urls) == 1:
+                try:
+                    r = leads.add_by_website(con, urls[0], cc)
+                except ValueError as e:
+                    return self._redirect("/", str(e))
+                st = r["stats"]
+                msg = (("Eklendi ve tarandı: " if r["new"] else "Zaten kayıtlıydı, yeniden tarandı: ")
+                       + f"{st['emails']} e-posta, {st['phones']} telefon, {st['people']} kişi" if r["ok"]
+                       else f"Eklendi ama siteye ulaşılamadı ({r['error']}). Bilgileri elle tamamlayabilirsin.")
+                return self._redirect(f"/lead/{r['id']}", msg)
+            if ADD_JOB["running"]:
+                return self._redirect("/", "Önceki site listesi hâlâ taranıyor; bitince tekrar dene")
+            run_add_sites(urls, cc)
+            return self._redirect("/", f"{len(urls)} site arka planda ekleniyor ve taranıyor; ilerleme bu kutuda görünür")
         if path == "/add":
+            if not f.get("website") and not f.get("name"):
+                return self._redirect("/add", "Web sitesi ya da firma adı girin")
+            if f.get("website") and not f.get("name"):
+                try:
+                    r = leads.add_by_website(con, f["website"], f.get("country") or None)
+                except ValueError as e:
+                    return self._redirect("/add", str(e))
+                return self._redirect(f"/lead/{r['id']}", "Eklendi ve tarandı" if r["ok"] else f"Eklendi ama siteye ulaşılamadı ({r['error']})")
             cid, new = leads.upsert_company(con, f.get("name"), f.get("country"), f.get("city"), f.get("website"),
                                             f.get("segment", "other"), f.get("source") or "manuel", f.get("notes"), f.get("email"), f.get("phone"), manual=True)
             con.commit()
+            if cid and f.get("website"):
+                r = leads.add_by_website(con, f["website"], f.get("country") or None, name=f.get("name"))
+                return self._redirect(f"/lead/{cid}", "Eklendi ve tarandı" if r["ok"] else f"Eklendi ama siteye ulaşılamadı ({r['error']})")
             return self._redirect(f"/lead/{cid}" if cid else "/add", "Eklendi" if new else "Bu firma zaten kayıtlıydı")
         if path == "/import":
+            before = con.execute("SELECT IFNULL(MAX(id),0) FROM companies").fetchone()[0]
             new, dup = leads.import_csv_text(con, f.get("csv", ""), f.get("source") or "csv")
-            return self._redirect("/leads", f"{new} yeni firma eklendi, {dup} tekrar/silinmiş atlandı. Puanlamak için Firma bul → Puanla.")
+            ids = [r[0] for r in con.execute("SELECT id FROM companies WHERE id>? AND IFNULL(website,'')<>''", (before,))]
+            if ids and not ADD_JOB["running"]:
+                run_add_sites(None, ids=ids)
+                return self._redirect("/", f"{new} yeni firma eklendi; {len(ids)} tanesinin sitesi arka planda taranıyor ve puanlanıyor")
+            return self._redirect("/leads", f"{new} yeni firma eklendi, {dup} tekrar/silinmiş atlandı.")
         if path == "/settings" and f.get("focus"):
             fc = [c for c in multi.get("fc", []) if c in COUNTRIES]
             if not fc:

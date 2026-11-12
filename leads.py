@@ -140,6 +140,9 @@ def db():
     con = sqlite3.connect(DB_PATH, timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys=ON")
+    # WAL: otomatik tarama, web istekleri ve arka planda site ekleme aynı anda okuyup yazabilsin (okuyan yazanı, yazan okuyanı bekletmez)
+    if con.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+        con.execute("PRAGMA journal_mode=WAL")
     con.executescript(SCHEMA)
     migrate(con)
     return con
@@ -1099,6 +1102,82 @@ def cmd_discover(a):
     log(f"Arama keşfi bitti: {total} yeni aday firma. Sıradaki adım: derin tarama (alıcı olup olmadığını site belirler).")
 
 
+def translate_one(con, cid):
+    """Tek firmanın site açıklamasını Türkçeye çevirir (elle eklenen firma hemen okunabilsin)."""
+    c = con.execute("SELECT description, desc_tr, lang, country FROM companies WHERE id=?", (cid,)).fetchone()
+    if not c or not c["description"] or c["desc_tr"]:
+        return
+    src = (c["lang"] or discover.LANG_OF.get((c["country"] or "").upper(), "en")).lower()
+    if src == "tr":
+        con.execute("UPDATE companies SET desc_tr=description WHERE id=?", (cid,))
+        return
+    email = config().get("sender_email", "")
+    res, _ = translate.translate_text(con, c["description"], src, email if re.fullmatch(r"[^@\s]+@[^@\s]+\.[a-z]{2,}", email or "") else "")
+    if res:
+        con.execute("UPDATE companies SET desc_tr=? WHERE id=?", (res, cid))
+
+
+def parse_sites(text):
+    """Yapıştırılan metinden web siteleri: satır, boşluk ya da virgülle ayrılmış; tekrarlar atılır."""
+    out = []
+    for tok in re.split(r"[\s,;]+", text or ""):
+        tok = tok.strip().strip("<>()[]\"'")
+        if "." in tok and not tok.startswith("@") and "@" not in tok:
+            dom = get_domain(norm_url(tok))
+            if dom and dom not in [get_domain(u) for u in out]:
+                out.append(norm_url(tok))
+    return out[:200]
+
+
+def add_by_website(con, url, country=None, name=None):
+    """Kendi bulduğun firma sitesini ekler ve hemen tarar: ad, ülke, e-posta, kişi, telefon, firma tipi, puan, Türkçe gerekçe ve açıklama.
+    Site zaten kayıtlıysa yeni kayıt açmaz, yeniden tarar. {'id','new','ok','stats','error'} döner."""
+    site = norm_url(url)
+    dom = get_domain(site)
+    if not dom or "." not in dom:
+        raise ValueError(f"Geçerli bir web sitesi değil: {url}")
+    chosen = (country or "").upper() or None
+    row = con.execute("SELECT id FROM companies WHERE domain=?", (dom,)).fetchone()
+    if row:
+        cid, new = row["id"], False
+        con.execute("UPDATE companies SET archived=0 WHERE id=?", (cid,))
+    else:
+        cc = chosen or geo.tld_country(dom)
+        label = name or re.sub(r"[-_]+", " ", dom.split(".")[0]).title()
+        cid, new = upsert_company(con, label, cc, None, site, "other", "manuel", manual=True)
+        if not cid:
+            raise ValueError(f"Eklenemedi: {url}")
+    res = crawler.crawl_site(site, max_pages=12, delay=0.6)
+    stats = apply_enrichment(con, cid, res)
+    if res["ok"] and new and not name:  # alan adından türetilen geçici ad yerine sitedeki gerçek ad
+        real = better_name(res, dom)
+        if real:
+            con.execute("UPDATE companies SET name=?, nkey=?, name_gloss=?, name_latin=? WHERE id=?",
+                        (real, name_key(real), translate.gloss_name(real), translate.translit(real), cid))
+    if chosen:  # elle seçilen ülke sitedeki ipuçlarından önce gelir
+        con.execute("UPDATE companies SET country=? WHERE id=?", (chosen, cid))
+    try:
+        translate_one(con, cid)
+    except Exception:
+        pass
+    refresh_derived(con, cid)
+    score_company(con, con.execute("SELECT * FROM companies WHERE id=?", (cid,)).fetchone(), market_ranks(con))
+    con.commit()
+    return {"id": cid, "new": new, "ok": res["ok"], "stats": stats, "error": (res["errors"] or [""])[0][:120] if not res["ok"] else ""}
+
+
+def cmd_add_sites(a):
+    """Komut satırı: py leads.py add-sites firma1.com firma2.ru --country RU"""
+    con = db()
+    for url in parse_sites(" ".join(a.sites)):
+        try:
+            r = add_by_website(con, url, a.country)
+            c = con.execute("SELECT name, country, score FROM companies WHERE id=?", (r["id"],)).fetchone()
+            print(f"{url}: {c['name']} ({c['country'] or '?'}) puan {c['score']}" + ("" if r["ok"] else f" · site açılmadı: {r['error']}"), flush=True)
+        except ValueError as e:
+            print(f"{url}: {e}", flush=True)
+
+
 def cmd_translate(a):
     """En uygun firmaların site açıklamalarını Türkçeye çevirir (önbellekli; ücretsiz MyMemory, anahtar varsa Claude/LibreTranslate)."""
     con = db()
@@ -1295,13 +1374,14 @@ ARCHIVE_RULES = [  # (açıklama, koşul) — yalnızca henüz temas edilmemiş 
     ("sitesi açılmayan, iletişimi olmayan", "enrich_error IS NOT NULL AND IFNULL(source,'')<>'seed' AND IFNULL(phone,'')='' AND NOT EXISTS("
      "SELECT 1 FROM contacts k WHERE k.company_id=companies.id AND k.email_ok=1)"),
 ]
-ARCHIVE_BASE = "IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND evidence IS NULL"
+ARCHIVE_BASE = "IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND evidence IS NULL AND IFNULL(source,'')<>'manuel'"
 
 
 def archive_rules():
     """[(açıklama, tam koşul)]. Odak dışı ülkeler kanıtlı olsa da arşive gider; diğer kurallar kanıtlı ve yıldızlıları korur."""
     fc = ",".join(f"'{c}'" for c in focus_countries())
-    rules = [("odak pazarlar dışındaki ülkeler", f"IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND IFNULL(country,'') NOT IN ({fc})")]
+    rules = [("odak pazarlar dışındaki ülkeler", f"IFNULL(archived,0)=0 AND status='new' AND IFNULL(starred,0)=0 AND IFNULL(source,'')<>'manuel' "
+                                                f"AND IFNULL(country,'') NOT IN ({fc})")]
     return rules + [(label, f"{ARCHIVE_BASE} AND ({cond})") for label, cond in ARCHIVE_RULES]
 
 
@@ -2016,6 +2096,8 @@ def main():
     add("cleanup", cmd_cleanup, "dükkân/kafe/rakip gibi uygun olmayanları arşive kaldır (silmez)")
     add("auto", cmd_auto, "otomatik tarama turunu şimdi çalıştır (sıradaki odak ülkeler)")
     add("fix-countries", cmd_fix_countries, "firmaların ülkesini sitelerinden kontrol et ve düzelt")
+    s = add("add-sites", cmd_add_sites, "kendi bulduğun firma sitelerini ekle ve hemen tara")
+    s.add_argument("sites", nargs="+"); s.add_argument("--country")
     add("score", cmd_score, "firmaları puanla")
     s = add("list", cmd_list, "firmaları listele")
     s.add_argument("--status"); s.add_argument("--country"); s.add_argument("--segment")

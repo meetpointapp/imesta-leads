@@ -13,6 +13,7 @@ Sadece Python 3 ve SQLite kullanır (kurulum yok, `pip install` yok). Veriler te
 ## Üç ekran
 
 - **Firmalar** (ana sayfa): otomatik taramanın bulduğu firmalar, puana göre. Ülke çipleri, "Yeni adaylar / CRM'dekiler / Tümü", e-postası olan ve ürün kanıtlı filtreleri. Her satırda neden potansiyel olduğu, web sitesi, iletişim simgeleri ve üç düğme: **CRM'e kaydet**, **E-posta**, **Engelle** (firma silinir ve otomatik tarama bir daha bulmaz; Ayarlar → Engellenen firmalar'dan geri alınır). Üstte taramanın canlı durumu: şu an hangi ülke, hangi adım, son tur sonucu, varsa hata.
+- **Kendi bulduğun firmayı ekle** (Firmalar'ın en üstü): web sitesini yapıştır → **Ekle ve tara**. Site 12 sayfaya kadar taranır; firma adı, ülkesi (alan adı, telefon kodu, adres), e-postalar, kişiler, telefon, firma tipi (fabrika / toptancı / çikolata), puan ve Türkçe gerekçe kendiliğinden dolar. Tek sitede doğrudan firma sayfası açılır; birden çok siteyi her satıra bir tane yapıştırırsan tarama arka planda sürer ve ilerleme kutuda görünür. Ülke seçersen tespit edilen ülke yerine o yazılır. Kayıtlı bir siteyi girersen firma arşivdeyse geri gelir ve yeniden taranır. Elle eklenen firmalar otomatik arşiv kurallarıyla (odak dışı ülke, site açılmadı vb.) **hiç arşive kalkmaz**. Liste yükle (CSV) ile gelen sitesi olan firmalar da arka planda taranıp puanlanır. Komut satırı: `py leads.py add-sites firma1.com firma2.ru --country RU`.
 - **Satış**: CRM'e kaydedilen firmalar aşama aşama (CRM'de → İletişimde → Yanıt verdi → Numune → Pazarlık → Kazanıldı). Açık fırsat değeri, aşama olasılıklarıyla ağırlıklı tahmin, teklifteki miktar, kazanma oranı; bugün yapılacak takipler, görevler, süresi dolan teklifler; açık teklif ve numuneler.
 - **Ayarlar**: otomatik tarama durumu ve "Şimdi tara", odak ülkeler, imza bilgileri, engellenen firmalar, isteğe bağlı servis anahtarları, gelişmiş araçlar ve pazar verisi.
 
@@ -108,6 +109,8 @@ python3 leads.py markets --hs 1805 --top 30   # kakao tozu
 # 3) Firma toplama
 python3 leads.py harvest-osm --country DE,NL,GB,AE
 python3 leads.py import-csv data/ornek_liste.csv --source "Gulfood 2026"
+
+python3 leads.py add-sites zalatimo.com bayansulu.kz   # kendi bulduğun siteler: tara, ekle, puanla
 
 # 4) E-posta bul, puanla, listele
 python3 leads.py enrich --limit 100

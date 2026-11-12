@@ -217,6 +217,40 @@ class T(unittest.TestCase):
         r = orig_open(B + "/static/logo.svg")
         self.assertEqual((r.status, r.headers.get("Content-Type")), (200, "image/svg+xml"))
 
+    def test_add_by_website(self):
+        SRV["yeni-kek.kz"] = ("biscuit_bakery", 450, "Yeni Kek Fabrikası")
+        SRV["ikinci-kek.uz"] = ("biscuit_bakery", 120, "İkinci Kek")
+        SRV["ucuncu-dagitim.az"] = ("distributor", 40, "Üçüncü Dağıtım")
+        s, loc = post("/add-sites", [("sites", "https://www.yeni-kek.kz/"), ("country", "")])
+        self.assertEqual(s, 303)
+        self.assertTrue(loc.startswith("/lead/"), loc)
+        con = leads.db()
+        c = con.execute("SELECT * FROM companies WHERE domain='yeni-kek.kz'").fetchone()
+        self.assertEqual((c["name"], c["country"], c["source"], c["buyer_type"]), ("Yeni Kek Fabrikası", "KZ", "manuel", "industrial"))  # ad ve ülke siteden
+        self.assertGreater(c["score"], 50)
+        self.assertTrue(con.execute("SELECT 1 FROM contacts WHERE company_id=? AND email LIKE 'einkauf@%'", (c["id"],)).fetchone())
+        con.close()
+        self.assertIn("Neden potansiyel?", get(loc.split("?")[0])[1].decode())
+        # aynı site tekrar: yeni kayıt açılmaz, yeniden taranır
+        s, loc2 = post("/add-sites", [("sites", "yeni-kek.kz")])
+        self.assertEqual(loc2.split("?")[0], loc.split("?")[0])
+        # çoklu: arka planda
+        post("/add-sites", [("sites", "ikinci-kek.uz\nucuncu-dagitim.az, olmayan-site.example"), ("country", "")])
+        wait = threading.Event()  # time.sleep bu modülde etkisiz (setUpModule); gerçek bekleme
+        for _ in range(200):
+            if not web.ADD_JOB["running"]:
+                break
+            wait.wait(0.1)
+        self.assertEqual((web.ADD_JOB["total"], web.ADD_JOB["done"]), (3, 3))
+        con = leads.db()
+        got = {r[0]: (r[1], r[2]) for r in con.execute("SELECT domain, country, buyer_type FROM companies WHERE domain IN ('ikinci-kek.uz','ucuncu-dagitim.az')")}
+        self.assertEqual(got, {"ikinci-kek.uz": ("UZ", "industrial"), "ucuncu-dagitim.az": ("AZ", "distributor")})
+        self.assertTrue(con.execute("SELECT 1 FROM companies WHERE domain='olmayan-site.example' AND source='manuel'").fetchone())  # açılmasa da eklenir
+        leads.auto_archive(con)
+        self.assertEqual(con.execute("SELECT archived FROM companies WHERE domain='olmayan-site.example'").fetchone()[0], 0)  # elle eklenen arşive düşmez
+        con.close()
+        self.assertIn("Kendi bulduğun firmayı ekle", get("/")[1].decode())
+
     def test_firms_hub_save_and_block(self):
         con = leads.db()
         cid, _ = leads.upsert_company(con, "Hub Kakao Fabrikası", "EG", None, "https://hub-kakao.eg", "chocolate_maker", "osm")
